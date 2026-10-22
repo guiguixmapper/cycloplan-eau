@@ -1,0 +1,1635 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CycloPlan Pro - Planificateur d'Itinéraires Vélo</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+    
+    <!-- Leaflet & Geocoder -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder@2.4.0/dist/Control.Geocoder.css" />
+    <script src="https://unpkg.com/leaflet-control-geocoder@2.4.0/dist/Control.Geocoder.js"></script>
+    
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+        .leaflet-container { cursor: crosshair !important; z-index: 10; }
+        .leaflet-interactive { cursor: pointer !important; }
+        .leaflet-control { cursor: auto !important; }
+        
+        .climbs-scroll::-webkit-scrollbar { height: 5px; }
+        .climbs-scroll::-webkit-scrollbar-track { background: transparent; }
+        .climbs-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        .climbs-scroll::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        #loader { display: none; }
+        .is-loading #loader { display: flex; }
+
+        #btn-chart { transition: opacity 0.25s ease, transform 0.25s ease; }
+        .tool-icon svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    </style>
+</head>
+<body class="flex flex-col h-screen bg-gray-50 text-gray-800 font-sans">
+
+    <!-- HEADER -->
+    <header class="flex-none bg-emerald-600 text-white shadow-md z-50">
+        <div class="px-4 py-2 flex flex-wrap items-center justify-between gap-3 text-sm">
+            <div class="flex items-center space-x-1 md:space-x-2">
+                <span class="font-bold text-lg mr-2 flex items-center gap-2">
+                    <svg class="w-6 h-6 inline-block" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="5.5" cy="17.5" r="3.5"/>
+                        <circle cx="18.5" cy="17.5" r="3.5"/>
+                        <path d="M15 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm-3 11.5V14l-3-3 4-3 2 3h2"/>
+                    </svg>
+                    CycloPlan
+                </span>
+                
+                <button onclick="undo()" id="btn-undo" class="tool-icon p-1.5 md:px-2 md:py-1 bg-emerald-700 hover:bg-emerald-800 rounded disabled:opacity-40 disabled:cursor-not-allowed transition" title="Annuler (Ctrl+Z)">
+                    <svg viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 00-9-9 9 9 0 00-6 2.3L3 13"/></svg>
+                </button>
+                <button onclick="redo()" id="btn-redo" class="tool-icon p-1.5 md:px-2 md:py-1 bg-emerald-700 hover:bg-emerald-800 rounded disabled:opacity-40 disabled:cursor-not-allowed transition" title="Rétablir (Ctrl+Y)">
+                    <svg viewBox="0 0 24 24"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 019-9 9 9 0 016 2.3l3 2.7"/></svg>
+                </button>
+                <button onclick="reverseRoute()" id="btn-reverse" class="tool-icon p-1.5 md:px-2 md:py-1 bg-emerald-700 hover:bg-emerald-800 rounded disabled:opacity-40 disabled:cursor-not-allowed transition" title="Inverser le sens">
+                    <svg viewBox="0 0 24 24"><path d="M17 2.1l4 4-4 4"/><path d="M3 12.2v-2a4 4 0 014-4h12.8M7 21.9l-4-4 4-4"/><path d="M21 11.8v2a4 4 0 01-4 4H4.2"/></svg>
+                </button>
+                <button onclick="resetRoute()" id="btn-reset" class="tool-icon p-1.5 md:px-2 md:py-1 bg-red-500 hover:bg-red-600 rounded ml-1 disabled:opacity-40 disabled:cursor-not-allowed transition" title="Effacer tout">
+                    <svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                </button>
+
+                <select id="profile" class="ml-2 bg-white text-gray-800 rounded px-2 py-1 outline-none font-medium cursor-pointer" onchange="updateRoute(true, false)">
+                    <option value="fastbike">🚴 Route</option>
+                    <option value="trekking">🚵 Gravel</option>
+                </select>
+
+                <button onclick="toggleWaterLayer()" id="btn-water-toggle" class="tool-icon px-2 py-1 bg-sky-700 hover:bg-sky-800 rounded flex items-center gap-1 font-medium text-xs ml-1 transition" title="Afficher/Masquer les points d'eau">
+                    <span>💧 Eau</span>
+                </button>
+            </div>
+
+            <div class="flex items-center space-x-3 bg-emerald-700 px-3 py-1 rounded">
+                <div class="flex items-center" title="Puissance cible en Watts">
+                    <span>⚡</span>
+                    <input type="number" id="power" value="160" class="w-14 ml-1 bg-transparent text-white border-b border-emerald-400 text-center outline-none" onchange="recalculatePhysics()"> W
+                </div>
+                <div class="flex items-center" title="Poids total (Cycliste + Vélo)">
+                    <span>⚖️</span>
+                    <input type="number" id="weight" value="85" class="w-12 ml-1 bg-transparent text-white border-b border-emerald-400 text-center outline-none" onchange="recalculatePhysics()"> kg
+                </div>
+                <div class="flex items-center" title="Date et heure de départ">
+                    <span>🕒</span>
+                    <input type="datetime-local" id="start-time" class="ml-1 bg-transparent text-white border-b border-emerald-400 outline-none cursor-pointer" onchange="recalculatePhysics()">
+                </div>
+            </div>
+
+            <div class="flex items-center space-x-1.5">
+                <label class="tool-icon px-2.5 py-1 bg-emerald-700 hover:bg-emerald-800 cursor-pointer rounded flex items-center gap-1.5 transition font-medium" title="Importer une trace GPX">
+                    <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    <span>GPX</span>
+                    <input type="file" id="file-import" accept=".gpx" class="hidden" onchange="importGPX(event)">
+                </label>
+                <button onclick="exportGPX()" id="btn-export" class="tool-icon px-2.5 py-1 bg-emerald-700 hover:bg-emerald-800 rounded flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed transition font-medium" title="Exporter en GPX">
+                    <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    <span>GPX</span>
+                </button>
+                <button onclick="showQRModal()" id="btn-qr" class="tool-icon px-2.5 py-1 bg-blue-600 hover:bg-blue-700 rounded flex items-center gap-1.5 font-medium disabled:opacity-40 disabled:cursor-not-allowed transition" title="Partager par lien ou QR Code">
+                    <svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+                    <span>Partager</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Bandeau de statut et alertes -->
+        <div class="bg-emerald-800 px-4 py-1.5 flex flex-wrap justify-between items-center text-sm font-medium gap-2">
+            <div id="loader" class="items-center text-yellow-300">
+                <svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-yellow-300" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                Calcul en cours…
+            </div>
+            
+            <div class="flex items-center gap-3 flex-wrap text-xs">
+                <span id="route-status-msg" class="text-emerald-200 text-sm">Clique sur la carte pour tracer.</span>
+                <span id="alert-sunset" class="hidden px-2 py-0.5 rounded font-bold transition-all shadow-sm border border-transparent"></span>
+                <button id="alert-unpaved" class="hidden bg-orange-500 hover:bg-orange-600 text-white px-2 py-0.5 rounded font-bold shadow transition-all cursor-pointer" onclick="zoomToUnpaved()"></button>
+                <button id="stat-water" class="hidden px-2 py-0.5 rounded font-bold transition-all shadow-sm cursor-pointer" onclick="fetchWaterPointsAlongRoute()"></button>
+            </div>
+
+            <div class="ml-auto flex items-center space-x-6 text-sm">
+                <span title="Distance totale">📏 <span id="stat-dist">0,0</span> km</span>
+                <span title="Dénivelé positif cumulé">⛰️ +<span id="stat-dplus">0</span> m</span>
+                <span title="Durée estimée et vitesse moyenne">⏱️ <span id="stat-time">0h 00m</span> <span class="text-xs text-emerald-300 font-normal ml-1">(<span id="stat-speed">0,0</span> km/h)</span></span>
+            </div>
+        </div>
+    </header>
+
+    <!-- MAIN (Carte + Météo) -->
+    <main class="flex-1 relative flex flex-col">
+        <div class="absolute inset-0">
+            <div id="map" class="w-full h-full"></div>
+        </div>
+
+        <!-- WIDGET MÉTÉO (Ancré en bas à droite) -->
+        <div id="weather-widget" class="absolute bottom-4 right-4 z-[700] bg-white/95 backdrop-blur-md p-3 rounded-xl shadow-xl border border-gray-200/80 text-sm hidden flex-col w-56 pointer-events-none select-none transition-all">
+            <div class="flex items-center justify-between pb-1.5 mb-1.5 border-b border-gray-100">
+                <span id="w-loc" class="text-[11px] font-bold text-gray-700 bg-gray-100 px-2 py-0.5 rounded border border-gray-200">Départ</span>
+                <div class="flex items-center gap-1">
+                    <span class="text-[11px] text-gray-500">Heure&nbsp;:</span>
+                    <span id="w-time" class="text-xs font-mono font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">--:--</span>
+                </div>
+            </div>
+
+            <div id="w-loading-indicator" class="hidden text-xs text-emerald-600 font-medium py-2 text-center items-center justify-center gap-1.5">
+                <svg class="animate-spin h-3.5 w-3.5 text-emerald-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                <span>Météo en cours…</span>
+            </div>
+
+            <div id="w-content">
+                <div class="flex items-center justify-between px-1 mb-2">
+                    <div class="flex items-center gap-2">
+                        <span id="w-icon" class="text-2xl">☀️</span>
+                        <div class="text-xs text-gray-600 font-medium leading-tight" id="w-desc">Dégagé</div>
+                    </div>
+                    <div class="text-right">
+                        <div class="text-xl font-black text-gray-800 leading-none"><span id="w-temp">--</span><span class="text-sm font-normal text-gray-500">°C</span></div>
+                        <div class="text-[10px] text-gray-400 mt-0.5">Ressenti <span id="w-feels">--</span>°C</div>
+                    </div>
+                </div>
+
+                <div class="flex flex-col gap-1 text-[11px] bg-gray-50 p-2 rounded-lg border border-gray-100">
+                    <div class="flex items-center justify-between text-gray-700 font-medium">
+                        <span>💧 Précipitations&nbsp;:</span>
+                        <span id="w-precip" class="font-bold">Sec</span>
+                    </div>
+                    <div class="flex items-center justify-between pt-1 border-t border-gray-200/60">
+                        <div class="flex items-center gap-1.5 text-gray-700">
+                            <span>💨 Vent&nbsp;:</span>
+                            <div>
+                                <span class="font-bold text-xs"><span id="w-wind">--</span> km/h</span>
+                                <span class="text-[10px] text-gray-400 block -mt-0.5">(raf. <span id="w-gust" class="font-semibold text-gray-600">--</span>)</span>
+                            </div>
+                        </div>
+                        <div class="w-7 h-7 flex items-center justify-center bg-gray-200/80 border border-gray-300 rounded-full shrink-0 shadow-inner">
+                            <svg id="w-wind-dir" class="transition-transform duration-300 w-4 h-4 text-emerald-700" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M12 2L19 21L12 17L5 21L12 2Z" />
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- BOUTON OUVERTURE DU PROFIL -->
+        <button onclick="toggleElevationPanel()" id="btn-chart" class="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-[600] bg-white px-6 py-2.5 rounded-full shadow-lg border border-gray-300 font-bold hover:bg-gray-50 text-emerald-700 flex items-center gap-2 hover:scale-105 hidden">
+            📈 Relief & Profil
+        </button>
+    </main>
+
+    <!-- VOLET INFÉRIEUR COMPACT -->
+    <aside id="elevation-panel" class="h-0 bg-white border-t border-gray-300 transition-all duration-300 ease-in-out relative flex flex-col shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] z-[500] box-border">
+        <button onclick="toggleElevationPanel()" class="absolute top-1.5 right-2 text-gray-600 hover:text-gray-900 z-50 font-semibold text-xs px-2.5 py-1 bg-white hover:bg-gray-100 rounded border border-gray-300 shadow-sm flex items-center gap-1.5 transition">
+            <span>Fermer</span>
+            <span class="font-bold text-sm">✕</span>
+        </button>
+        
+        <div class="flex-none w-full border-b border-gray-200 bg-slate-50 flex flex-col md:flex-row items-stretch">
+            <div class="px-3 py-1.5 text-[10px] font-semibold text-gray-500 flex items-center space-x-2 shrink-0 border-b md:border-b-0 md:border-r border-gray-200 bg-white">
+                <span>Pente&nbsp;:</span>
+                <span class="text-blue-500">&lt; -2 %</span>
+                <span class="text-green-500">0-3 %</span>
+                <span class="text-yellow-500">3-6 %</span>
+                <span class="text-orange-500">6-9 %</span>
+                <span class="text-red-500">9-12 %</span>
+                <span class="text-black">&gt; 12 %</span>
+            </div>
+            
+            <div id="climbs-list" class="flex-1 flex items-center gap-2 pl-3 pr-24 py-1.5 overflow-x-auto climbs-scroll min-h-[44px]">
+                <span class="text-[10px] text-gray-400 italic">Trace un itinéraire pour voir les ascensions.</span>
+            </div>
+        </div>
+        
+        <div class="flex-1 w-full p-2 relative bg-white">
+            <canvas id="elevationChart"></canvas>
+        </div>
+    </aside>
+
+    <!-- MODALE QR CODE -->
+    <div id="qr-modal" class="fixed inset-0 bg-black/60 z-[9999] hidden flex items-center justify-center backdrop-blur-sm p-4">
+        <div class="bg-white p-6 rounded-xl shadow-2xl text-center max-w-md w-full relative">
+            <button onclick="document.getElementById('qr-modal').classList.add('hidden')" class="absolute top-3 right-4 text-gray-500 hover:text-gray-800 text-xl font-bold">✕</button>
+            <h2 class="text-xl font-bold mb-4 text-emerald-700">Partager cet itinéraire</h2>
+            <div id="qr-container" class="mx-auto border rounded-lg mb-4 bg-white flex items-center justify-center overflow-hidden" style="width:296px;max-width:100%;min-height:296px"></div>
+            <div class="flex items-center bg-gray-100 rounded p-2 mb-2">
+                <input type="text" id="qr-url" readonly class="bg-transparent w-full outline-none text-sm text-gray-700 pr-2">
+                <button onclick="copyUrl()" id="btn-copy" class="bg-emerald-600 text-white px-3 py-1 rounded text-sm hover:bg-emerald-700 shrink-0 transition font-medium">Copier</button>
+            </div>
+            <p class="text-xs text-gray-500">Scanne ce QR Code avec un mobile pour l'ouvrir.</p>
+            <div id="qr-file-warning" class="hidden text-xs text-amber-800 bg-amber-50 border border-amber-200 p-2.5 rounded mt-3 text-left">
+                ⚠️ <strong>Fichier local (file://)&nbsp;:</strong> Ton téléphone ne peut pas accéder à un fichier sur ton disque dur. Utilise le bouton <strong>GPX</strong>.
+            </div>
+        </div>
+    </div>
+
+    <!-- FENÊTRE DÉTAIL D'UNE ASCENSION -->
+    <div id="climb-modal" class="fixed inset-0 bg-black/60 z-[9999] hidden flex items-center justify-center backdrop-blur-sm p-3" onclick="if(event.target===this) closeClimbModal()">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-full overflow-y-auto relative p-5">
+            <button onclick="closeClimbModal()" class="absolute top-3 right-4 text-gray-500 hover:text-gray-800 text-xl font-bold">✕</button>
+            <div id="climb-modal-body"></div>
+        </div>
+    </div>
+
+    <!-- SCRIPTS -->
+    <!-- Générateur de QR Code (qrcode-generator, licence MIT) intégré : aucun fichier externe -->
+    <script>
+var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],f={},c=function(t,r){o=function(t){for(var r=new Array(t),e=0;e<t;e+=1){r[e]=new Array(t);for(var n=0;n<t;n+=1)r[e][n]=null}return r}(i=4*e+17),l(0,0),l(i-7,0),l(0,i-7),s(),h(),d(t,r),e>=7&&v(t),null==a&&(a=p(e,n,u)),w(a,r)},l=function(t,r){for(var e=-1;e<=7;e+=1)if(!(t+e<=-1||i<=t+e))for(var n=-1;n<=7;n+=1)r+n<=-1||i<=r+n||(o[t+e][r+n]=0<=e&&e<=6&&(0==n||6==n)||0<=n&&n<=6&&(0==e||6==e)||2<=e&&e<=4&&2<=n&&n<=4)},h=function(){for(var t=8;t<i-8;t+=1)null==o[t][6]&&(o[t][6]=t%2==0);for(var r=8;r<i-8;r+=1)null==o[6][r]&&(o[6][r]=r%2==0)},s=function(){for(var t=B.getPatternPosition(e),r=0;r<t.length;r+=1)for(var n=0;n<t.length;n+=1){var i=t[r],a=t[n];if(null==o[i][a])for(var u=-2;u<=2;u+=1)for(var f=-2;f<=2;f+=1)o[i+u][a+f]=-2==u||2==u||-2==f||2==f||0==u&&0==f}},v=function(t){for(var r=B.getBCHTypeNumber(e),n=0;n<18;n+=1){var a=!t&&1==(r>>n&1);o[Math.floor(n/3)][n%3+i-8-3]=a}for(n=0;n<18;n+=1){a=!t&&1==(r>>n&1);o[n%3+i-8-3][Math.floor(n/3)]=a}},d=function(t,r){for(var e=n<<3|r,a=B.getBCHTypeInfo(e),u=0;u<15;u+=1){var f=!t&&1==(a>>u&1);u<6?o[u][8]=f:u<8?o[u+1][8]=f:o[i-15+u][8]=f}for(u=0;u<15;u+=1){f=!t&&1==(a>>u&1);u<8?o[8][i-u-1]=f:u<9?o[8][15-u-1+1]=f:o[8][15-u-1]=f}o[i-8][8]=!t},w=function(t,r){for(var e=-1,n=i-1,a=7,u=0,f=B.getMaskFunction(r),c=i-1;c>0;c-=2)for(6==c&&(c-=1);;){for(var g=0;g<2;g+=1)if(null==o[n][c-g]){var l=!1;u<t.length&&(l=1==(t[u]>>>a&1)),f(n,c-g)&&(l=!l),o[n][c-g]=l,-1==(a-=1)&&(u+=1,a=7)}if((n+=e)<0||i<=n){n-=e,e=-e;break}}},p=function(t,r,e){for(var n=A.getRSBlocks(t,r),o=b(),i=0;i<e.length;i+=1){var a=e[i];o.put(a.getMode(),4),o.put(a.getLength(),B.getLengthInBits(a.getMode(),t)),a.write(o)}var u=0;for(i=0;i<n.length;i+=1)u+=n[i].dataCount;if(o.getLengthInBits()>8*u)throw"code length overflow. ("+o.getLengthInBits()+">"+8*u+")";for(o.getLengthInBits()+4<=8*u&&o.put(0,4);o.getLengthInBits()%8!=0;)o.putBit(!1);for(;!(o.getLengthInBits()>=8*u||(o.put(236,8),o.getLengthInBits()>=8*u));)o.put(17,8);return function(t,r){for(var e=0,n=0,o=0,i=new Array(r.length),a=new Array(r.length),u=0;u<r.length;u+=1){var f=r[u].dataCount,c=r[u].totalCount-f;n=Math.max(n,f),o=Math.max(o,c),i[u]=new Array(f);for(var g=0;g<i[u].length;g+=1)i[u][g]=255&t.getBuffer()[g+e];e+=f;var l=B.getErrorCorrectPolynomial(c),h=k(i[u],l.getLength()-1).mod(l);for(a[u]=new Array(l.getLength()-1),g=0;g<a[u].length;g+=1){var s=g+h.getLength()-a[u].length;a[u][g]=s>=0?h.getAt(s):0}}var v=0;for(g=0;g<r.length;g+=1)v+=r[g].totalCount;var d=new Array(v),w=0;for(g=0;g<n;g+=1)for(u=0;u<r.length;u+=1)g<i[u].length&&(d[w]=i[u][g],w+=1);for(g=0;g<o;g+=1)for(u=0;u<r.length;u+=1)g<a[u].length&&(d[w]=a[u][g],w+=1);return d}(o,n)};f.addData=function(t,r){var e=null;switch(r=r||"Byte"){case"Numeric":e=M(t);break;case"Alphanumeric":e=x(t);break;case"Byte":e=m(t);break;case"Kanji":e=L(t);break;default:throw"mode:"+r}u.push(e),a=null},f.isDark=function(t,r){if(t<0||i<=t||r<0||i<=r)throw t+","+r;return o[t][r]},f.getModuleCount=function(){return i},f.make=function(){if(e<1){for(var t=1;t<40;t++){for(var r=A.getRSBlocks(t,n),o=b(),i=0;i<u.length;i++){var a=u[i];o.put(a.getMode(),4),o.put(a.getLength(),B.getLengthInBits(a.getMode(),t)),a.write(o)}var g=0;for(i=0;i<r.length;i++)g+=r[i].dataCount;if(o.getLengthInBits()<=8*g)break}e=t}c(!1,function(){for(var t=0,r=0,e=0;e<8;e+=1){c(!0,e);var n=B.getLostPoint(f);(0==e||t>n)&&(t=n,r=e)}return r}())},f.createTableTag=function(t,r){t=t||2;var e="";e+='<table style="',e+=" border-width: 0px; border-style: none;",e+=" border-collapse: collapse;",e+=" padding: 0px; margin: "+(r=void 0===r?4*t:r)+"px;",e+='">',e+="<tbody>";for(var n=0;n<f.getModuleCount();n+=1){e+="<tr>";for(var o=0;o<f.getModuleCount();o+=1)e+='<td style="',e+=" border-width: 0px; border-style: none;",e+=" border-collapse: collapse;",e+=" padding: 0px; margin: 0px;",e+=" width: "+t+"px;",e+=" height: "+t+"px;",e+=" background-color: ",e+=f.isDark(n,o)?"#000000":"#ffffff",e+=";",e+='"/>';e+="</tr>"}return e+="</tbody>",e+="</table>"},f.createSvgTag=function(t,r,e,n){var o={};"object"==typeof arguments[0]&&(t=(o=arguments[0]).cellSize,r=o.margin,e=o.alt,n=o.title),t=t||2,r=void 0===r?4*t:r,(e="string"==typeof e?{text:e}:e||{}).text=e.text||null,e.id=e.text?e.id||"qrcode-description":null,(n="string"==typeof n?{text:n}:n||{}).text=n.text||null,n.id=n.text?n.id||"qrcode-title":null;var i,a,u,c,g=f.getModuleCount()*t+2*r,l="";for(c="l"+t+",0 0,"+t+" -"+t+",0 0,-"+t+"z ",l+='<svg version="1.1" xmlns="http://www.w3.org/2000/svg"',l+=o.scalable?"":' width="'+g+'px" height="'+g+'px"',l+=' viewBox="0 0 '+g+" "+g+'" ',l+=' preserveAspectRatio="xMinYMin meet"',l+=n.text||e.text?' role="img" aria-labelledby="'+y([n.id,e.id].join(" ").trim())+'"':"",l+=">",l+=n.text?'<title id="'+y(n.id)+'">'+y(n.text)+"</title>":"",l+=e.text?'<description id="'+y(e.id)+'">'+y(e.text)+"</description>":"",l+='<rect width="100%" height="100%" fill="white" cx="0" cy="0"/>',l+='<path d="',a=0;a<f.getModuleCount();a+=1)for(u=a*t+r,i=0;i<f.getModuleCount();i+=1)f.isDark(a,i)&&(l+="M"+(i*t+r)+","+u+c);return l+='" stroke="transparent" fill="black"/>',l+="</svg>"},f.createDataURL=function(t,r){t=t||2,r=void 0===r?4*t:r;var e=f.getModuleCount()*t+2*r,n=r,o=e-r;return I(e,e,function(r,e){if(n<=r&&r<o&&n<=e&&e<o){var i=Math.floor((r-n)/t),a=Math.floor((e-n)/t);return f.isDark(a,i)?0:1}return 1})},f.createImgTag=function(t,r,e){t=t||2,r=void 0===r?4*t:r;var n=f.getModuleCount()*t+2*r,o="";return o+="<img",o+=' src="',o+=f.createDataURL(t,r),o+='"',o+=' width="',o+=n,o+='"',o+=' height="',o+=n,o+='"',e&&(o+=' alt="',o+=y(e),o+='"'),o+="/>"};var y=function(t){for(var r="",e=0;e<t.length;e+=1){var n=t.charAt(e);switch(n){case"<":r+="&lt;";break;case">":r+="&gt;";break;case"&":r+="&amp;";break;case'"':r+="&quot;";break;default:r+=n}}return r};return f.createASCII=function(t,r){if((t=t||1)<2)return function(t){t=void 0===t?2:t;var r,e,n,o,i,a=1*f.getModuleCount()+2*t,u=t,c=a-t,g={"██":"█","█ ":"▀"," █":"▄","  ":" "},l={"██":"▀","█ ":"▀"," █":" ","  ":" "},h="";for(r=0;r<a;r+=2){for(n=Math.floor((r-u)/1),o=Math.floor((r+1-u)/1),e=0;e<a;e+=1)i="█",u<=e&&e<c&&u<=r&&r<c&&f.isDark(n,Math.floor((e-u)/1))&&(i=" "),u<=e&&e<c&&u<=r+1&&r+1<c&&f.isDark(o,Math.floor((e-u)/1))?i+=" ":i+="█",h+=t<1&&r+1>=c?l[i]:g[i];h+="\n"}return a%2&&t>0?h.substring(0,h.length-a-1)+Array(a+1).join("▀"):h.substring(0,h.length-1)}(r);t-=1,r=void 0===r?2*t:r;var e,n,o,i,a=f.getModuleCount()*t+2*r,u=r,c=a-r,g=Array(t+1).join("██"),l=Array(t+1).join("  "),h="",s="";for(e=0;e<a;e+=1){for(o=Math.floor((e-u)/t),s="",n=0;n<a;n+=1)i=1,u<=n&&n<c&&u<=e&&e<c&&f.isDark(o,Math.floor((n-u)/t))&&(i=0),s+=i?g:l;for(o=0;o<t;o+=1)h+=s+"\n"}return h.substring(0,h.length-1)},f.renderTo2dContext=function(t,r){r=r||2;for(var e=f.getModuleCount(),n=0;n<e;n++)for(var o=0;o<e;o++)t.fillStyle=f.isDark(n,o)?"black":"white",t.fillRect(n*r,o*r,r,r)},f};t.stringToBytes=(t.stringToBytesFuncs={default:function(t){for(var r=[],e=0;e<t.length;e+=1){var n=t.charCodeAt(e);r.push(255&n)}return r}}).default,t.createStringToBytes=function(t,r){var e=function(){for(var e=S(t),n=function(){var t=e.read();if(-1==t)throw"eof";return t},o=0,i={};;){var a=e.read();if(-1==a)break;var u=n(),f=n()<<8|n();i[String.fromCharCode(a<<8|u)]=f,o+=1}if(o!=r)throw o+" != "+r;return i}(),n="?".charCodeAt(0);return function(t){for(var r=[],o=0;o<t.length;o+=1){var i=t.charCodeAt(o);if(i<128)r.push(i);else{var a=e[t.charAt(o)];"number"==typeof a?(255&a)==a?r.push(a):(r.push(a>>>8),r.push(255&a)):r.push(n)}}return r}};var r,e,n,o,i,a=1,u=2,f=4,c=8,g={L:1,M:0,Q:3,H:2},l=0,h=1,s=2,v=3,d=4,w=5,p=6,y=7,B=(r=[[],[6,18],[6,22],[6,26],[6,30],[6,34],[6,22,38],[6,24,42],[6,26,46],[6,28,50],[6,30,54],[6,32,58],[6,34,62],[6,26,46,66],[6,26,48,70],[6,26,50,74],[6,30,54,78],[6,30,56,82],[6,30,58,86],[6,34,62,90],[6,28,50,72,94],[6,26,50,74,98],[6,30,54,78,102],[6,28,54,80,106],[6,32,58,84,110],[6,30,58,86,114],[6,34,62,90,118],[6,26,50,74,98,122],[6,30,54,78,102,126],[6,26,52,78,104,130],[6,30,56,82,108,134],[6,34,60,86,112,138],[6,30,58,86,114,142],[6,34,62,90,118,146],[6,30,54,78,102,126,150],[6,24,50,76,102,128,154],[6,28,54,80,106,132,158],[6,32,58,84,110,136,162],[6,26,54,82,110,138,166],[6,30,58,86,114,142,170]],e=1335,n=7973,i=function(t){for(var r=0;0!=t;)r+=1,t>>>=1;return r},(o={}).getBCHTypeInfo=function(t){for(var r=t<<10;i(r)-i(e)>=0;)r^=e<<i(r)-i(e);return 21522^(t<<10|r)},o.getBCHTypeNumber=function(t){for(var r=t<<12;i(r)-i(n)>=0;)r^=n<<i(r)-i(n);return t<<12|r},o.getPatternPosition=function(t){return r[t-1]},o.getMaskFunction=function(t){switch(t){case l:return function(t,r){return(t+r)%2==0};case h:return function(t,r){return t%2==0};case s:return function(t,r){return r%3==0};case v:return function(t,r){return(t+r)%3==0};case d:return function(t,r){return(Math.floor(t/2)+Math.floor(r/3))%2==0};case w:return function(t,r){return t*r%2+t*r%3==0};case p:return function(t,r){return(t*r%2+t*r%3)%2==0};case y:return function(t,r){return(t*r%3+(t+r)%2)%2==0};default:throw"bad maskPattern:"+t}},o.getErrorCorrectPolynomial=function(t){for(var r=k([1],0),e=0;e<t;e+=1)r=r.multiply(k([1,C.gexp(e)],0));return r},o.getLengthInBits=function(t,r){if(1<=r&&r<10)switch(t){case a:return 10;case u:return 9;case f:case c:return 8;default:throw"mode:"+t}else if(r<27)switch(t){case a:return 12;case u:return 11;case f:return 16;case c:return 10;default:throw"mode:"+t}else{if(!(r<41))throw"type:"+r;switch(t){case a:return 14;case u:return 13;case f:return 16;case c:return 12;default:throw"mode:"+t}}},o.getLostPoint=function(t){for(var r=t.getModuleCount(),e=0,n=0;n<r;n+=1)for(var o=0;o<r;o+=1){for(var i=0,a=t.isDark(n,o),u=-1;u<=1;u+=1)if(!(n+u<0||r<=n+u))for(var f=-1;f<=1;f+=1)o+f<0||r<=o+f||0==u&&0==f||a==t.isDark(n+u,o+f)&&(i+=1);i>5&&(e+=3+i-5)}for(n=0;n<r-1;n+=1)for(o=0;o<r-1;o+=1){var c=0;t.isDark(n,o)&&(c+=1),t.isDark(n+1,o)&&(c+=1),t.isDark(n,o+1)&&(c+=1),t.isDark(n+1,o+1)&&(c+=1),0!=c&&4!=c||(e+=3)}for(n=0;n<r;n+=1)for(o=0;o<r-6;o+=1)t.isDark(n,o)&&!t.isDark(n,o+1)&&t.isDark(n,o+2)&&t.isDark(n,o+3)&&t.isDark(n,o+4)&&!t.isDark(n,o+5)&&t.isDark(n,o+6)&&(e+=40);for(o=0;o<r;o+=1)for(n=0;n<r-6;n+=1)t.isDark(n,o)&&!t.isDark(n+1,o)&&t.isDark(n+2,o)&&t.isDark(n+3,o)&&t.isDark(n+4,o)&&!t.isDark(n+5,o)&&t.isDark(n+6,o)&&(e+=40);var g=0;for(o=0;o<r;o+=1)for(n=0;n<r;n+=1)t.isDark(n,o)&&(g+=1);return e+=Math.abs(100*g/r/r-50)/5*10},o),C=function(){for(var t=new Array(256),r=new Array(256),e=0;e<8;e+=1)t[e]=1<<e;for(e=8;e<256;e+=1)t[e]=t[e-4]^t[e-5]^t[e-6]^t[e-8];for(e=0;e<255;e+=1)r[t[e]]=e;var n={glog:function(t){if(t<1)throw"glog("+t+")";return r[t]},gexp:function(r){for(;r<0;)r+=255;for(;r>=256;)r-=255;return t[r]}};return n}();function k(t,r){if(void 0===t.length)throw t.length+"/"+r;var e=function(){for(var e=0;e<t.length&&0==t[e];)e+=1;for(var n=new Array(t.length-e+r),o=0;o<t.length-e;o+=1)n[o]=t[o+e];return n}(),n={getAt:function(t){return e[t]},getLength:function(){return e.length},multiply:function(t){for(var r=new Array(n.getLength()+t.getLength()-1),e=0;e<n.getLength();e+=1)for(var o=0;o<t.getLength();o+=1)r[e+o]^=C.gexp(C.glog(n.getAt(e))+C.glog(t.getAt(o)));return k(r,0)},mod:function(t){if(n.getLength()-t.getLength()<0)return n;for(var r=C.glog(n.getAt(0))-C.glog(t.getAt(0)),e=new Array(n.getLength()),o=0;o<n.getLength();o+=1)e[o]=n.getAt(o);for(o=0;o<t.getLength();o+=1)e[o]^=C.gexp(C.glog(t.getAt(o))+r);return k(e,0).mod(t)}};return n}var A=function(){var t=[[1,26,19],[1,26,16],[1,26,13],[1,26,9],[1,44,34],[1,44,28],[1,44,22],[1,44,16],[1,70,55],[1,70,44],[2,35,17],[2,35,13],[1,100,80],[2,50,32],[2,50,24],[4,25,9],[1,134,108],[2,67,43],[2,33,15,2,34,16],[2,33,11,2,34,12],[2,86,68],[4,43,27],[4,43,19],[4,43,15],[2,98,78],[4,49,31],[2,32,14,4,33,15],[4,39,13,1,40,14],[2,121,97],[2,60,38,2,61,39],[4,40,18,2,41,19],[4,40,14,2,41,15],[2,146,116],[3,58,36,2,59,37],[4,36,16,4,37,17],[4,36,12,4,37,13],[2,86,68,2,87,69],[4,69,43,1,70,44],[6,43,19,2,44,20],[6,43,15,2,44,16],[4,101,81],[1,80,50,4,81,51],[4,50,22,4,51,23],[3,36,12,8,37,13],[2,116,92,2,117,93],[6,58,36,2,59,37],[4,46,20,6,47,21],[7,42,14,4,43,15],[4,133,107],[8,59,37,1,60,38],[8,44,20,4,45,21],[12,33,11,4,34,12],[3,145,115,1,146,116],[4,64,40,5,65,41],[11,36,16,5,37,17],[11,36,12,5,37,13],[5,109,87,1,110,88],[5,65,41,5,66,42],[5,54,24,7,55,25],[11,36,12,7,37,13],[5,122,98,1,123,99],[7,73,45,3,74,46],[15,43,19,2,44,20],[3,45,15,13,46,16],[1,135,107,5,136,108],[10,74,46,1,75,47],[1,50,22,15,51,23],[2,42,14,17,43,15],[5,150,120,1,151,121],[9,69,43,4,70,44],[17,50,22,1,51,23],[2,42,14,19,43,15],[3,141,113,4,142,114],[3,70,44,11,71,45],[17,47,21,4,48,22],[9,39,13,16,40,14],[3,135,107,5,136,108],[3,67,41,13,68,42],[15,54,24,5,55,25],[15,43,15,10,44,16],[4,144,116,4,145,117],[17,68,42],[17,50,22,6,51,23],[19,46,16,6,47,17],[2,139,111,7,140,112],[17,74,46],[7,54,24,16,55,25],[34,37,13],[4,151,121,5,152,122],[4,75,47,14,76,48],[11,54,24,14,55,25],[16,45,15,14,46,16],[6,147,117,4,148,118],[6,73,45,14,74,46],[11,54,24,16,55,25],[30,46,16,2,47,17],[8,132,106,4,133,107],[8,75,47,13,76,48],[7,54,24,22,55,25],[22,45,15,13,46,16],[10,142,114,2,143,115],[19,74,46,4,75,47],[28,50,22,6,51,23],[33,46,16,4,47,17],[8,152,122,4,153,123],[22,73,45,3,74,46],[8,53,23,26,54,24],[12,45,15,28,46,16],[3,147,117,10,148,118],[3,73,45,23,74,46],[4,54,24,31,55,25],[11,45,15,31,46,16],[7,146,116,7,147,117],[21,73,45,7,74,46],[1,53,23,37,54,24],[19,45,15,26,46,16],[5,145,115,10,146,116],[19,75,47,10,76,48],[15,54,24,25,55,25],[23,45,15,25,46,16],[13,145,115,3,146,116],[2,74,46,29,75,47],[42,54,24,1,55,25],[23,45,15,28,46,16],[17,145,115],[10,74,46,23,75,47],[10,54,24,35,55,25],[19,45,15,35,46,16],[17,145,115,1,146,116],[14,74,46,21,75,47],[29,54,24,19,55,25],[11,45,15,46,46,16],[13,145,115,6,146,116],[14,74,46,23,75,47],[44,54,24,7,55,25],[59,46,16,1,47,17],[12,151,121,7,152,122],[12,75,47,26,76,48],[39,54,24,14,55,25],[22,45,15,41,46,16],[6,151,121,14,152,122],[6,75,47,34,76,48],[46,54,24,10,55,25],[2,45,15,64,46,16],[17,152,122,4,153,123],[29,74,46,14,75,47],[49,54,24,10,55,25],[24,45,15,46,46,16],[4,152,122,18,153,123],[13,74,46,32,75,47],[48,54,24,14,55,25],[42,45,15,32,46,16],[20,147,117,4,148,118],[40,75,47,7,76,48],[43,54,24,22,55,25],[10,45,15,67,46,16],[19,148,118,6,149,119],[18,75,47,31,76,48],[34,54,24,34,55,25],[20,45,15,61,46,16]],r=function(t,r){var e={};return e.totalCount=t,e.dataCount=r,e},e={};return e.getRSBlocks=function(e,n){var o=function(r,e){switch(e){case g.L:return t[4*(r-1)+0];case g.M:return t[4*(r-1)+1];case g.Q:return t[4*(r-1)+2];case g.H:return t[4*(r-1)+3];default:return}}(e,n);if(void 0===o)throw"bad rs block @ typeNumber:"+e+"/errorCorrectionLevel:"+n;for(var i=o.length/3,a=[],u=0;u<i;u+=1)for(var f=o[3*u+0],c=o[3*u+1],l=o[3*u+2],h=0;h<f;h+=1)a.push(r(c,l));return a},e}(),b=function(){var t=[],r=0,e={getBuffer:function(){return t},getAt:function(r){var e=Math.floor(r/8);return 1==(t[e]>>>7-r%8&1)},put:function(t,r){for(var n=0;n<r;n+=1)e.putBit(1==(t>>>r-n-1&1))},getLengthInBits:function(){return r},putBit:function(e){var n=Math.floor(r/8);t.length<=n&&t.push(0),e&&(t[n]|=128>>>r%8),r+=1}};return e},M=function(t){var r=a,e=t,n={getMode:function(){return r},getLength:function(t){return e.length},write:function(t){for(var r=e,n=0;n+2<r.length;)t.put(o(r.substring(n,n+3)),10),n+=3;n<r.length&&(r.length-n==1?t.put(o(r.substring(n,n+1)),4):r.length-n==2&&t.put(o(r.substring(n,n+2)),7))}},o=function(t){for(var r=0,e=0;e<t.length;e+=1)r=10*r+i(t.charAt(e));return r},i=function(t){if("0"<=t&&t<="9")return t.charCodeAt(0)-"0".charCodeAt(0);throw"illegal char :"+t};return n},x=function(t){var r=u,e=t,n={getMode:function(){return r},getLength:function(t){return e.length},write:function(t){for(var r=e,n=0;n+1<r.length;)t.put(45*o(r.charAt(n))+o(r.charAt(n+1)),11),n+=2;n<r.length&&t.put(o(r.charAt(n)),6)}},o=function(t){if("0"<=t&&t<="9")return t.charCodeAt(0)-"0".charCodeAt(0);if("A"<=t&&t<="Z")return t.charCodeAt(0)-"A".charCodeAt(0)+10;switch(t){case" ":return 36;case"$":return 37;case"%":return 38;case"*":return 39;case"+":return 40;case"-":return 41;case".":return 42;case"/":return 43;case":":return 44;default:throw"illegal char :"+t}};return n},m=function(r){var e=f,n=t.stringToBytes(r),o={getMode:function(){return e},getLength:function(t){return n.length},write:function(t){for(var r=0;r<n.length;r+=1)t.put(n[r],8)}};return o},L=function(r){var e=c,n=t.stringToBytesFuncs.SJIS;if(!n)throw"sjis not supported.";!function(){var t=n("友");if(2!=t.length||38726!=(t[0]<<8|t[1]))throw"sjis not supported."}();var o=n(r),i={getMode:function(){return e},getLength:function(t){return~~(o.length/2)},write:function(t){for(var r=o,e=0;e+1<r.length;){var n=(255&r[e])<<8|255&r[e+1];if(33088<=n&&n<=40956)n-=33088;else{if(!(57408<=n&&n<=60351))throw"illegal char at "+(e+1)+"/"+n;n-=49472}n=192*(n>>>8&255)+(255&n),t.put(n,13),e+=2}if(e<r.length)throw"illegal char at "+(e+1)}};return i},D=function(){var t=[],r={writeByte:function(r){t.push(255&r)},writeShort:function(t){r.writeByte(t),r.writeByte(t>>>8)},writeBytes:function(t,e,n){e=e||0,n=n||t.length;for(var o=0;o<n;o+=1)r.writeByte(t[o+e])},writeString:function(t){for(var e=0;e<t.length;e+=1)r.writeByte(t.charCodeAt(e))},toByteArray:function(){return t},toString:function(){var r="";r+="[";for(var e=0;e<t.length;e+=1)e>0&&(r+=","),r+=t[e];return r+="]"}};return r},S=function(t){var r=t,e=0,n=0,o=0,i={read:function(){for(;o<8;){if(e>=r.length){if(0==o)return-1;throw"unexpected end of file./"+o}var t=r.charAt(e);if(e+=1,"="==t)return o=0,-1;t.match(/^\s$/)||(n=n<<6|a(t.charCodeAt(0)),o+=6)}var i=n>>>o-8&255;return o-=8,i}},a=function(t){if(65<=t&&t<=90)return t-65;if(97<=t&&t<=122)return t-97+26;if(48<=t&&t<=57)return t-48+52;if(43==t)return 62;if(47==t)return 63;throw"c:"+t};return i},I=function(t,r,e){for(var n=function(t,r){var e=t,n=r,o=new Array(t*r),i={setPixel:function(t,r,n){o[r*e+t]=n},write:function(t){t.writeString("GIF87a"),t.writeShort(e),t.writeShort(n),t.writeByte(128),t.writeByte(0),t.writeByte(0),t.writeByte(0),t.writeByte(0),t.writeByte(0),t.writeByte(255),t.writeByte(255),t.writeByte(255),t.writeString(","),t.writeShort(0),t.writeShort(0),t.writeShort(e),t.writeShort(n),t.writeByte(0);var r=a(2);t.writeByte(2);for(var o=0;r.length-o>255;)t.writeByte(255),t.writeBytes(r,o,255),o+=255;t.writeByte(r.length-o),t.writeBytes(r,o,r.length-o),t.writeByte(0),t.writeString(";")}},a=function(t){for(var r=1<<t,e=1+(1<<t),n=t+1,i=u(),a=0;a<r;a+=1)i.add(String.fromCharCode(a));i.add(String.fromCharCode(r)),i.add(String.fromCharCode(e));var f,c,g,l=D(),h=(f=l,c=0,g=0,{write:function(t,r){if(t>>>r!=0)throw"length over";for(;c+r>=8;)f.writeByte(255&(t<<c|g)),r-=8-c,t>>>=8-c,g=0,c=0;g|=t<<c,c+=r},flush:function(){c>0&&f.writeByte(g)}});h.write(r,n);var s=0,v=String.fromCharCode(o[s]);for(s+=1;s<o.length;){var d=String.fromCharCode(o[s]);s+=1,i.contains(v+d)?v+=d:(h.write(i.indexOf(v),n),i.size()<4095&&(i.size()==1<<n&&(n+=1),i.add(v+d)),v=d)}return h.write(i.indexOf(v),n),h.write(e,n),h.flush(),l.toByteArray()},u=function(){var t={},r=0,e={add:function(n){if(e.contains(n))throw"dup key:"+n;t[n]=r,r+=1},size:function(){return r},indexOf:function(r){return t[r]},contains:function(r){return void 0!==t[r]}};return e};return i}(t,r),o=0;o<r;o+=1)for(var i=0;i<t;i+=1)n.setPixel(i,o,e(i,o));var a=D();n.write(a);for(var u=function(){var t=0,r=0,e=0,n="",o={},i=function(t){n+=String.fromCharCode(a(63&t))},a=function(t){if(t<0);else{if(t<26)return 65+t;if(t<52)return t-26+97;if(t<62)return t-52+48;if(62==t)return 43;if(63==t)return 47}throw"n:"+t};return o.writeByte=function(n){for(t=t<<8|255&n,r+=8,e+=1;r>=6;)i(t>>>r-6),r-=6},o.flush=function(){if(r>0&&(i(t<<6-r),t=0,r=0),e%3!=0)for(var o=3-e%3,a=0;a<o;a+=1)n+="="},o.toString=function(){return n},o}(),f=a.toByteArray(),c=0;c<f.length;c+=1)u.writeByte(f[c]);return u.flush(),"data:image/gif;base64,"+u};return t}();qrcode.stringToBytesFuncs["UTF-8"]=function(t){return function(t){for(var r=[],e=0;e<t.length;e++){var n=t.charCodeAt(e);n<128?r.push(n):n<2048?r.push(192|n>>6,128|63&n):n<55296||n>=57344?r.push(224|n>>12,128|n>>6&63,128|63&n):(e++,n=65536+((1023&n)<<10|1023&t.charCodeAt(e)),r.push(240|n>>18,128|n>>12&63,128|n>>6&63,128|63&n))}return r}(t)},function(t){"function"==typeof define&&define.amd?define([],t):"object"==typeof exports&&(module.exports=t())}(function(){return qrcode});
+    </script>
+
+    <script>
+        let map, routeLayer, unpavedLayer, activeClimbLayer, waterLayer, markersGroup, hoverMarker, waypoints = [];
+        let routeHistory = [], historyIndex = -1;
+        let routeCoords = [], chartStats = {}, weatherStationsData = [], detectedClimbs = [], chartInstance = null;
+        let sunsetISO = null, totalRouteTimeSeconds = 0;
+        let unpavedBounds = null;
+        let activeClimbRange = null;
+        let brouterTotalAscend = null;
+        let isWaterLayerVisible = true;
+        let waterAbortController = null;
+        
+        let weatherAbortController = null;
+        let routeAbortController = null;
+        let climbCum = null, climbEle = null;
+        let weatherDebounceTimer = null;
+
+        const now = new Date();
+        now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+        document.getElementById('start-time').value = now.toISOString().slice(0, 16);
+
+        function updateButtonsState() {
+            const hasRoute = waypoints.length >= 2;
+            const hasPoints = waypoints.length > 0;
+            
+            document.getElementById('btn-reverse').disabled = !hasRoute;
+            document.getElementById('btn-export').disabled = !hasRoute;
+            document.getElementById('btn-qr').disabled = !hasRoute;
+            document.getElementById('btn-reset').disabled = !hasPoints;
+            
+            const btnChart = document.getElementById('btn-chart');
+            const ww = document.getElementById('weather-widget');
+            const waterBadge = document.getElementById('stat-water');
+            
+            if (hasRoute) {
+                btnChart.classList.remove('hidden');
+                if (isPanelOpen) {
+                    btnChart.classList.add('opacity-0', 'pointer-events-none');
+                } else {
+                    btnChart.classList.remove('opacity-0', 'pointer-events-none');
+                }
+                ww.classList.remove('hidden');
+                ww.style.display = 'flex';
+                
+                // Afficher le bouton de recherche d'eau manuel s'il n'a pas encore été cherché
+                if (!waterBadge.dataset.searched) {
+                    waterBadge.innerHTML = `💧 Rechercher l'eau`;
+                    waterBadge.className = "bg-sky-600 hover:bg-sky-700 text-white px-2.5 py-0.5 rounded font-bold shadow transition-all cursor-pointer";
+                    waterBadge.classList.remove('hidden');
+                }
+
+                document.getElementById('route-status-msg').innerText = "Tracé calculé (Clic = ajouter | Clic ligne = insérer | Clic droit = supprimer)";
+            } else {
+                btnChart.classList.add('hidden', 'opacity-0', 'pointer-events-none');
+                ww.classList.add('hidden');
+                document.getElementById('alert-sunset').classList.add('hidden');
+                document.getElementById('alert-unpaved').classList.add('hidden');
+                waterBadge.classList.add('hidden');
+                waterBadge.removeAttribute('data-searched');
+                if (isPanelOpen) toggleElevationPanel();
+                document.getElementById('route-status-msg').innerText = hasPoints ? "Clique à nouveau pour tracer l'itinéraire." : "Clique sur la carte pour placer le point de départ.";
+            }
+        }
+
+        function initMap() {
+            map = L.map('map', { zoomControl: false, attributionControl: false }).setView([46.603354, 1.888334], 6);
+            
+            L.control.attribution({ position: 'bottomleft' }).addTo(map);
+            L.control.zoom({ position: 'topleft' }).addTo(map);
+
+            const layers = {
+                "CyclOSM (Vélo)": L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', { maxZoom: 20 }),
+                "Relief Esri": L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 }),
+                "Plan IGN": L.tileLayer('https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&FORMAT=image/png&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}', { maxZoom: 19 }),
+                "Classique (OSM)": L.tileLayer('https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png', { maxZoom: 20 }),
+                "Satellite": L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 })
+            };
+            layers["CyclOSM (Vélo)"].addTo(map);
+            L.control.layers(layers, null, { position: 'topright' }).addTo(map);
+            
+            L.Control.geocoder({ defaultMarkGeocode: false, position: 'topleft' }).on('markgeocode', function(e) {
+                map.fitBounds(e.geocode.bbox); 
+                pushHistory(); 
+                waypoints.push(e.geocode.center); 
+                updateRoute(true, waypoints.length === 2);
+            }).addTo(map);
+
+            L.Control.Geolocate = L.Control.extend({
+                onAdd: function(map) {
+                    const c = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+                    const b = L.DomUtil.create('a', '', c);
+                    b.innerHTML = '📍'; b.href = '#'; b.title = 'Ma position';
+                    b.style.fontSize = '16px'; b.style.display = 'flex'; b.style.alignItems = 'center'; b.style.justifyContent = 'center';
+                    b.onclick = function(e) { e.preventDefault(); e.stopPropagation(); map.locate({setView: true, maxZoom: 14}); };
+                    return c;
+                }
+            });
+            new L.Control.Geolocate({ position: 'topleft' }).addTo(map);
+
+            markersGroup = L.layerGroup().addTo(map);
+            unpavedLayer = L.layerGroup().addTo(map);
+            activeClimbLayer = L.layerGroup().addTo(map);
+            waterLayer = L.layerGroup().addTo(map);
+            
+            hoverMarker = L.circleMarker([0,0], { 
+                radius: 7, color: 'white', weight: 2.5, fillColor: '#ef4444', 
+                opacity: 0, fillOpacity: 0, pane: 'markerPane' 
+            }).addTo(map);
+
+            map.on('click', (e) => { 
+                pushHistory(); 
+                waypoints.push(e.latlng); 
+                updateRoute(true, waypoints.length === 2); 
+            });
+
+            updateButtonsState(); 
+            loadState();
+        }
+
+        /* HISTORIQUE */
+        function pushHistory() {
+            if (historyIndex < routeHistory.length - 1) routeHistory = routeHistory.slice(0, historyIndex + 1);
+            routeHistory.push(waypoints.map(ll => L.latLng(ll.lat, ll.lng)));
+            historyIndex++; updateHistoryButtons();
+        }
+        function undo() {
+            if (historyIndex >= 0) {
+                if (historyIndex === routeHistory.length - 1 && routeHistory.length > 0) routeHistory.push(waypoints.map(ll => L.latLng(ll.lat, ll.lng)));
+                historyIndex--; waypoints = historyIndex < 0 ? [] : routeHistory[historyIndex].map(ll => L.latLng(ll.lat, ll.lng));
+                updateHistoryButtons(); updateRoute(false, false);
+            }
+        }
+        function redo() {
+            if (historyIndex < routeHistory.length - 2) {
+                historyIndex++; waypoints = routeHistory[historyIndex].map(ll => L.latLng(ll.lat, ll.lng));
+                updateHistoryButtons(); updateRoute(false, false);
+            }
+        }
+        function updateHistoryButtons() {
+            document.getElementById('btn-undo').disabled = (historyIndex < 0);
+            document.getElementById('btn-redo').disabled = (historyIndex >= routeHistory.length - 2);
+        }
+        document.addEventListener('keydown', (e) => {
+            if (e.ctrlKey && e.key === 'z') { e.preventDefault(); undo(); }
+            if ((e.ctrlKey && e.key === 'y') || (e.ctrlKey && e.shiftKey && e.key === 'z')) { e.preventDefault(); redo(); }
+            if (e.key === 'Escape') {
+                document.getElementById('qr-modal').classList.add('hidden');
+                closeClimbModal();
+                if (isPanelOpen) toggleElevationPanel();
+            }
+        });
+
+        /* MOTEUR ROUTAGE */
+        async function updateRoute(saveState = true, fitBounds = false) {
+            updateButtonsState();
+            document.body.classList.add('is-loading');
+            renderMarkers();
+            unpavedLayer.clearLayers();
+            activeClimbLayer.clearLayers();
+
+            if (waypoints.length < 2) {
+                if (routeLayer) map.removeLayer(routeLayer);
+                waterLayer.clearLayers();
+                clearTimeout(waterDebounceTimer);
+                document.getElementById('stat-dist').innerText = '0,0';
+                document.getElementById('stat-dplus').innerText = '0';
+                document.getElementById('stat-time').innerText = '0h 00m';
+                document.getElementById('stat-speed').innerText = '0,0';
+                if (chartInstance) chartInstance.destroy();
+                document.getElementById('climbs-list').innerHTML = '<span class="text-[10px] text-gray-400 italic">Trace un itinéraire pour voir les ascensions.</span>';
+                
+                clearTimeout(weatherDebounceTimer);
+                if (weatherAbortController) weatherAbortController.abort();
+                if (waterAbortController) waterAbortController.abort();
+                weatherStationsData = [];
+                
+                document.body.classList.remove('is-loading');
+                if (saveState) saveToLocalStorage();
+                return;
+            }
+
+            const p = document.getElementById('profile').value;
+            const c = waypoints.map(wp => `${wp.lng.toFixed(6)},${wp.lat.toFixed(6)}`).join('|');
+            const url = `https://brouter.de/brouter?lonlats=${c}&profile=${p}&alternativeidx=0&format=geojson&elevation=1`;
+
+            if (routeAbortController) routeAbortController.abort();
+            routeAbortController = new AbortController();
+            const myController = routeAbortController;
+
+            try {
+                const res = await fetch(url, { signal: myController.signal });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const data = await res.json();
+                
+                if (routeLayer) map.removeLayer(routeLayer);
+                
+                if (data.features && data.features.length > 0) {
+                    routeCoords = data.features[0].geometry.coordinates; 
+                    
+                    const props = data.features[0].properties;
+                    brouterTotalAscend = (props && props['total-ascend']) ? parseInt(props['total-ascend'], 10) : null;
+
+                    routeLayer = L.geoJSON(data, {
+                        style: { color: '#2563eb', weight: 5, opacity: 0.8 },
+                        onEachFeature: (f, layer) => {
+                            layer.on('click', (e) => {
+                                L.DomEvent.stop(e); 
+                                pushHistory(); 
+                                insertWaypoint(e.latlng);
+                            });
+                        }
+                    }).addTo(map);
+
+                    detectUnpavedSections(data);
+                    recalculatePhysics();
+                    triggerWeatherFetch();
+                    scheduleWaterSync();   // réaffiche l'eau depuis le cache, ne cherche que les zones nouvelles
+                    
+                    if (saveState) saveToLocalStorage();
+
+                    if (fitBounds) {
+                        map.fitBounds(routeLayer.getBounds(), { padding: [45, 45] });
+                    }
+                }
+            } catch (err) {
+                if (err.name === 'AbortError') return;
+                if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
+                routeCoords = [];
+                waterLayer.clearLayers();
+                document.getElementById('route-status-msg').innerHTML = '<span class="text-red-300">Impossible de tracer par ici.</span>';
+            }
+            document.body.classList.remove('is-loading');
+        }
+
+        /* RECHERCHE MANUELLE DES POINTS D'EAU */
+        function toggleWaterLayer() {
+            isWaterLayerVisible = !isWaterLayerVisible;
+            const btn = document.getElementById('btn-water-toggle');
+            if (isWaterLayerVisible) {
+                waterLayer.addTo(map);
+                btn.className = "tool-icon px-2 py-1 bg-sky-700 hover:bg-sky-800 rounded flex items-center gap-1 font-medium text-xs ml-1 transition";
+            } else {
+                map.removeLayer(waterLayer);
+                btn.className = "tool-icon px-2 py-1 bg-gray-600 hover:bg-gray-700 rounded flex items-center gap-1 font-medium text-xs ml-1 transition opacity-60";
+            }
+        }
+
+
+        /* POINTS D'EAU : fichier local France + Suisse (water-fr-ch.json), plus aucune requête Overpass */
+        let waterPoints = null;
+        let waterLoadPromise = null;
+        const WATER_CELL = 0.25;
+
+        const WATER_ICON = L.divIcon({
+            html: `<svg viewBox="0 0 24 24" width="22" height="22" xmlns="http://www.w3.org/2000/svg" style="filter: drop-shadow(1px 2px 3px rgba(0,0,0,0.4));"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z" fill="#0284c7" stroke="#ffffff" stroke-width="1.5"/></svg>`,
+            className: '', iconSize: [22, 22], iconAnchor: [11, 11]
+        });
+
+        function ensureWaterPoints() {
+            if (waterPoints) return Promise.resolve(waterPoints);
+            if (!waterLoadPromise) {
+                waterLoadPromise = fetch('water-fr-ch.json')
+                    .then(r => { if (!r.ok) throw new Error('fichier'); return r.json(); })
+                    .then(data => { waterPoints = data; return data; })
+                    .catch(err => { waterLoadPromise = null; throw err; });
+            }
+            return waterLoadPromise;
+        }
+
+        function renderWaterFromFile() {
+            waterLayer.clearLayers();
+            if (!waterPoints || !routeCoords || routeCoords.length < 2) return 0;
+
+            const step = Math.max(1, Math.floor(routeCoords.length / 500));
+            const samples = [];
+            let minLa = Infinity, maxLa = -Infinity, minLo = Infinity, maxLo = -Infinity;
+            for (let i = 0; i < routeCoords.length; i += step) {
+                const la = routeCoords[i][1], lo = routeCoords[i][0];
+                samples.push([la, lo]);
+                if (la < minLa) minLa = la; if (la > maxLa) maxLa = la;
+                if (lo < minLo) minLo = lo; if (lo > maxLo) maxLo = lo;
+            }
+            const last = routeCoords[routeCoords.length - 1];
+            samples.push(L.latLng(last[1], last[0]));
+
+            const pad = 0.01;
+            const i0 = Math.floor((minLa - pad) / WATER_CELL);
+            const i1 = Math.floor((maxLa + pad) / WATER_CELL);
+            const j0 = Math.floor((minLo - pad) / WATER_CELL);
+            const j1 = Math.floor((maxLo + pad) / WATER_CELL);
+            const cells = waterPoints.cells || {};
+            let found = 0;
+
+            for (let i = i0; i <= i1; i++) {
+                for (let j = j0; j <= j1; j++) {
+                    const arr = cells[i + ',' + j];
+                    if (!arr) continue;
+                    for (let p = 0; p < arr.length; p++) {
+                        const lat = arr[p][0] / 1e5, lon = arr[p][1] / 1e5;
+                        if (lat < minLa - pad || lat > maxLa + pad || lon < minLo - pad || lon > maxLo + pad) continue;
+                        const pt = L.latLng(lat, lon);
+                        let minDist = Infinity;
+                        for (let s = 0; s < samples.length; s++) {
+                            const d = pt.distanceTo(samples[s]);
+                            if (d < minDist) minDist = d;
+                            if (minDist < 40) break;
+                        }
+                        if (minDist > 500) continue;
+                        found++;
+                        const label = String(arr[p][2] || "Eau potable").replace(/[&<>]/g, c => ({'&':'&','<':'<','>':'>'}[c]));
+                        L.marker([lat, lon], { icon: WATER_ICON }).addTo(waterLayer).bindPopup(`
+                            <div class="text-xs font-sans">
+                                <div class="font-bold text-sky-700 flex items-center gap-1 mb-1">💧 ${label}</div>
+                                <div class="text-gray-500">À ~<strong>${Math.round(minDist)} m</strong> du parcours</div>
+                            </div>
+                        `);
+                    }
+                }
+            }
+            return found;
+        }
+
+        function scheduleWaterSync() {
+            clearTimeout(waterDebounceTimer);
+            waterDebounceTimer = setTimeout(() => {
+                if (!routeCoords || routeCoords.length < 2) return;
+                if (waterSearchedOnce) { fetchWaterPointsAlongRoute(false); return; }
+                const badge = document.getElementById('stat-water');
+                badge.removeAttribute('data-searched');
+                badge.innerHTML = `💧 Rechercher l'eau`;
+                badge.className = "bg-sky-600 hover:bg-sky-700 text-white px-2.5 py-0.5 rounded font-bold shadow transition-all cursor-pointer";
+                badge.classList.remove('hidden');
+            }, 400);
+        }
+
+        async function fetchWaterPointsAlongRoute(userClick = true) {
+            const badge = document.getElementById('stat-water');
+            if (userClick === true) waterSearchedOnce = true;
+            clearTimeout(waterDebounceTimer);
+            if (!routeCoords || routeCoords.length < 2) {
+                waterLayer.clearLayers();
+                badge.classList.add('hidden');
+                return;
+            }
+            const okCls = "bg-sky-600 hover:bg-sky-700 text-white px-2.5 py-0.5 rounded font-bold shadow transition-all cursor-pointer";
+            badge.dataset.searched = "true";
+            badge.innerHTML = `💧 Chargement…`;
+            badge.className = "px-2.5 py-0.5 rounded font-bold bg-sky-700 text-sky-100 animate-pulse border border-sky-500 shadow-sm cursor-default";
+            badge.classList.remove('hidden');
+            try {
+                await ensureWaterPoints();
+                const n = renderWaterFromFile();
+                badge.innerHTML = `💧 ${n} point${n > 1 ? 's' : ''} d'eau`;
+                badge.className = okCls;
+            } catch (err) {
+                waterSearchedOnce = false;
+                badge.innerHTML = `💧 Fichier eau introuvable`;
+                badge.className = "bg-red-600 hover:bg-red-700 text-white px-2.5 py-0.5 rounded font-bold shadow transition-all cursor-pointer";
+            }
+        }
+
+
+        /* DÉTECTION DES CHEMINS NON REVÊTUS */
+        function detectUnpavedSections(geojsonData) {
+            unpavedLayer.clearLayers();
+            unpavedBounds = null;
+            const alertBadge = document.getElementById('alert-unpaved');
+            alertBadge.classList.add('hidden');
+            
+            const profile = document.getElementById('profile').value;
+            const props = geojsonData.features[0].properties;
+            if (!props || !props.messages) return;
+
+            let totalUnpavedMeters = 0;
+            const lines = props.messages;
+            if (!Array.isArray(lines) || lines.length < 2) return;
+
+            const unpavedPointsAll = [];
+            let lastFoundIdx = 0;
+
+            for (let i = 2; i < lines.length; i++) {
+                const prevLine = Array.isArray(lines[i-1]) ? lines[i-1] : lines[i-1].split('\t');
+                const curLine = Array.isArray(lines[i]) ? lines[i] : lines[i].split('\t');
+
+                const prevLon = parseFloat(prevLine[0]) / 1000000;
+                const prevLat = parseFloat(prevLine[1]) / 1000000;
+                const curLon = parseFloat(curLine[0]) / 1000000;
+                const curLat = parseFloat(curLine[1]) / 1000000;
+                const dist = parseFloat(curLine[3]) || 0;
+                const wayTag = curLine[9] || '';
+
+                const isUnpaved = /highway=(track|path)|surface=(unpaved|gravel|dirt|ground|compacted|fine_gravel|sand|wood)|tracktype=(grade2|grade3|grade4|grade5)/i.test(wayTag);
+
+                if (isUnpaved && dist > 15) {
+                    totalUnpavedMeters += dist;
+
+                    const idx1 = findClosestCoordIndex(routeCoords, prevLat, prevLon, lastFoundIdx);
+                    const idx2 = findClosestCoordIndex(routeCoords, curLat, curLon, idx1);
+
+                    if (idx2 >= idx1) {
+                        lastFoundIdx = idx2;
+                        const subCoords = routeCoords.slice(idx1, idx2 + 1).map(c => [c[1], c[0]]);
+                        if (subCoords.length >= 2) {
+                            const poly = L.polyline(subCoords, {
+                                color: '#f97316', weight: 7, dashArray: '8, 8', opacity: 0.95, pane: 'overlayPane'
+                            }).addTo(unpavedLayer);
+                            poly.bindTooltip(`Chemin non revêtu (~${Math.round(dist)} m)`, { sticky: true });
+                            unpavedPointsAll.push(...subCoords);
+                        }
+                    }
+                } else {
+                    lastFoundIdx = findClosestCoordIndex(routeCoords, curLat, curLon, lastFoundIdx);
+                }
+            }
+
+            if (unpavedPointsAll.length > 0) {
+                unpavedBounds = L.latLngBounds(unpavedPointsAll);
+            }
+
+            if (profile === 'fastbike' && totalUnpavedMeters >= 50) {
+                alertBadge.innerHTML = `⚠️ ${Math.round(totalUnpavedMeters)} m de chemin (Voir)`;
+                alertBadge.title = "Cliquer pour zoomer sur les portions non goudronnées";
+                alertBadge.classList.remove('hidden');
+            }
+        }
+
+        function findClosestCoordIndex(coords, targetLat, targetLon, startFrom = 0) {
+            let bestDist = Infinity;
+            let bestIdx = startFrom;
+            const maxSearch = Math.min(coords.length, startFrom + 350);
+            for (let i = startFrom; i < maxSearch; i++) {
+                const d = Math.pow(coords[i][1] - targetLat, 2) + Math.pow(coords[i][0] - targetLon, 2);
+                if (d < bestDist) {
+                    bestDist = d; bestIdx = i;
+                    if (d < 1e-9) break;
+                }
+            }
+            return bestIdx;
+        }
+
+        function zoomToUnpaved() {
+            if (unpavedBounds) {
+                map.fitBounds(unpavedBounds, { padding: [45, 45], maxZoom: 15 });
+            }
+        }
+
+        /* RENDU DES PINS SVG */
+        function renderMarkers() {
+            markersGroup.clearLayers();
+            waypoints.forEach((wp, index) => {
+                const color = index === 0 ? '#10b981' : (index === waypoints.length - 1 ? '#ef4444' : '#3b82f6');
+                const pinSVG = `<svg viewBox="0 0 24 36" width="28" height="42" xmlns="http://www.w3.org/2000/svg" style="filter: drop-shadow(2px 4px 4px rgba(0,0,0,0.3));">
+                    <path d="M12 0C5.373 0 0 5.373 0 12c0 7.378 11.233 22.82 11.535 23.21a.63.63 0 0 0 .93 0C12.767 34.82 24 19.378 24 12c0-6.627-5.373-12-12-12zm0 17c-2.761 0-5-2.239-5-5s2.239-5 5-5 5 2.239 5 5-2.239 5-5 5 z" fill="${color}" stroke="#ffffff" stroke-width="1"/>
+                </svg>`;
+                const icon = L.divIcon({ html: pinSVG, className: '', iconSize: [28, 42], iconAnchor: [14, 42] });
+                const marker = L.marker(wp, { icon: icon, draggable: true }).addTo(markersGroup);
+                marker.on('dragstart', () => pushHistory());
+                marker.on('dragend', (e) => { 
+                    waypoints[index] = e.target.getLatLng(); 
+                    updateRoute(true, false); 
+                });
+                marker.on('contextmenu', () => { 
+                    pushHistory(); 
+                    waypoints.splice(index, 1); 
+                    updateRoute(true, false); 
+                });
+            });
+        }
+
+        function insertWaypoint(latlng) {
+            let minInc = Infinity, bIdx = 1;
+            for (let i = 0; i < waypoints.length - 1; i++) {
+                let inc = map.distance(waypoints[i], latlng) + map.distance(latlng, waypoints[i+1]) - map.distance(waypoints[i], waypoints[i+1]);
+                if (inc < minInc) { minInc = inc; bIdx = i + 1; }
+            }
+            waypoints.splice(bIdx, 0, latlng); 
+            updateRoute(true, false); 
+        }
+
+        function reverseRoute() { 
+            pushHistory(); 
+            waypoints.reverse(); 
+            updateRoute(true, false); 
+        }
+
+        function resetRoute() { 
+            if(waypoints.length > 0) { 
+                pushHistory(); 
+                waypoints = []; 
+                updateRoute(true, false); 
+                waterLayer.clearLayers();
+                waterSearchedOnce = false;
+                document.getElementById('stat-water').classList.add('hidden');
+                document.getElementById('stat-water').removeAttribute('data-searched');
+            } 
+        }
+
+        /* PHYSIQUE (NEWTON-RAPHSON) */
+        function calculateSpeed(slope, power, weight) {
+            const g = 9.81, rho = 1.225, Crr = 0.004, CdA = 0.35, m = parseFloat(weight);
+            const angle = Math.atan(slope);
+            const F_resist = (m * g * Math.sin(angle)) + (m * g * Math.cos(angle) * Crr);
+            let v = 5;
+            for (let i = 0; i < 50; i++) {
+                let f = 0.5 * rho * CdA * Math.pow(v, 3) + F_resist * v - parseFloat(power);
+                let df = 1.5 * rho * CdA * Math.pow(v, 2) + F_resist;
+                let v_new = v - f / df;
+                if (v_new <= 0) { v = (F_resist < 0) ? Math.sqrt(-F_resist / (0.5 * rho * CdA)) : 0.5; break; }
+                if (Math.abs(v_new - v) < 0.01) { v = v_new; break; }
+                v = v_new;
+            }
+            return Math.max(v, 0.5);
+        }
+
+        function recalculatePhysics() {
+            if (!routeCoords || routeCoords.length < 2) return;
+
+            const power = document.getElementById('power').value || 160;
+            const weight = document.getElementById('weight').value || 85;
+
+            const n = routeCoords.length;
+            const cum = new Array(n).fill(0);
+            const rawEle = new Array(n);
+            rawEle[0] = Number.isFinite(routeCoords[0][2]) ? routeCoords[0][2] : 0;
+            for (let i = 1; i < n; i++) {
+                const p1 = L.latLng(routeCoords[i-1][1], routeCoords[i-1][0]);
+                const p2 = L.latLng(routeCoords[i][1], routeCoords[i][0]);
+                cum[i] = cum[i-1] + p1.distanceTo(p2);
+                rawEle[i] = Number.isFinite(routeCoords[i][2]) ? routeCoords[i][2] : rawEle[i-1];
+            }
+
+            const HALF_WIN = 40;
+            const smooth = new Array(n);
+            let lo = 0, hi = 0, sum = 0;
+            for (let i = 0; i < n; i++) {
+                while (hi < n && cum[hi] <= cum[i] + HALF_WIN) { sum += rawEle[hi]; hi++; }
+                while (lo < i && cum[lo] < cum[i] - HALF_WIN) { sum -= rawEle[lo]; lo++; }
+                smooth[i] = sum / (hi - lo);
+            }
+
+            let totalDist = 0, totalTime = 0, totalDPlus = 0;
+            let refEle = rawEle[0];
+
+            const MAX_POINTS = 1000;
+            const step = Math.max(1, Math.ceil(n / MAX_POINTS));
+            
+            chartStats = { dist: [0], ele: [refEle], slope: [0], eta: [0], coordIdx: [0] };
+
+            for (let i = 1; i < n; i++) {
+                const dist = cum[i] - cum[i-1];
+                totalDist += dist;
+                
+                const ele = rawEle[i];
+                const slope = dist > 0 ? (smooth[i] - smooth[i-1]) / dist : 0;
+
+                if (ele - refEle >= 3) { totalDPlus += (ele - refEle); refEle = ele; } 
+                else if (refEle - ele >= 3) refEle = ele;
+
+                totalTime += (dist > 0 ? dist / calculateSpeed(slope, power, weight) : 0);
+
+                if (i % step === 0 || i === n - 1) {
+                    chartStats.dist.push((totalDist / 1000).toFixed(2));
+                    chartStats.ele.push(ele);
+                    chartStats.slope.push(slope * 100);
+                    chartStats.eta.push(totalTime);
+                    chartStats.coordIdx.push(i);
+                }
+            }
+            
+            totalRouteTimeSeconds = totalTime;
+            const avgSpeed = totalTime > 0 ? (totalDist / 1000) / (totalTime / 3600) : 0;
+
+            document.getElementById('stat-dist').innerText = (totalDist / 1000).toFixed(1).replace('.', ',');
+            
+            const finalDPlus = (brouterTotalAscend !== null && brouterTotalAscend > 0) ? brouterTotalAscend : Math.round(totalDPlus);
+            document.getElementById('stat-dplus').innerText = finalDPlus;
+            
+            document.getElementById('stat-time').innerText = `${Math.floor(totalTime / 3600)}h ${Math.floor((totalTime % 3600) / 60).toString().padStart(2, '0')}m`;
+            document.getElementById('stat-speed').innerText = avgSpeed.toFixed(1).replace('.', ',');
+
+            detectClimbs();
+            
+            if (routeCoords.length > 0) {
+                const st = new Date(document.getElementById('start-time').value);
+                const ref = waypoints[0];
+                sunsetISO = getAstronomicalSunset(ref.lat, ref.lng, st);
+            }
+            checkSunsetAlert();
+
+            updateChart();
+        }
+
+        /* ALERTE COUCHER DE SOLEIL (NOAA) */
+        function getAstronomicalSunset(lat, lng, date) {
+            const rad = Math.PI / 180;
+            const startOfYear = new Date(date.getFullYear(), 0, 0);
+            const dayOfYear = Math.floor((date - startOfYear) / (1000 * 60 * 60 * 24));
+            
+            const gamma = (2 * Math.PI / 365) * (dayOfYear - 1 + (date.getHours() - 12) / 24);
+            const eqtime = 229.18 * (0.000075 + 0.001868 * Math.cos(gamma) - 0.032077 * Math.sin(gamma) - 0.014615 * Math.cos(2 * gamma) - 0.040849 * Math.sin(2 * gamma));
+            const decl = 0.006918 - 0.399912 * Math.cos(gamma) + 0.070257 * Math.sin(gamma) - 0.006758 * Math.cos(2 * gamma) + 0.000907 * Math.sin(2 * gamma);
+            
+            const zenith = 90.833 * rad;
+            const cosHA = (Math.cos(zenith) / (Math.cos(lat * rad) * Math.cos(decl))) - (Math.tan(lat * rad) * Math.tan(decl));
+            if (cosHA > 1 || cosHA < -1) return null;
+            
+            const ha = Math.acos(cosHA) / rad;
+            const sunsetUTCMinutes = 720 - 4 * lng - eqtime + 4 * ha;
+            
+            return new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate(), 0, sunsetUTCMinutes));
+        }
+
+        function checkSunsetAlert() {
+            const alertBadge = document.getElementById('alert-sunset');
+            if (waypoints.length < 2 || totalRouteTimeSeconds === 0) {
+                alertBadge.classList.add('hidden');
+                return;
+            }
+
+            const startDt = new Date(document.getElementById('start-time').value);
+            if (isNaN(startDt.getTime())) {
+                alertBadge.classList.add('hidden');
+                return;
+            }
+
+            const refPoint = waypoints[0];
+            sunsetISO = getAstronomicalSunset(refPoint.lat, refPoint.lng, startDt);
+
+            if (!sunsetISO) {
+                alertBadge.classList.add('hidden');
+                return;
+            }
+
+            const arrivalDt = new Date(startDt.getTime() + totalRouteTimeSeconds * 1000);
+            const sunsetStr = sunsetISO.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+            const diffMinutes = (arrivalDt.getTime() - sunsetISO.getTime()) / (60 * 1000);
+
+            if (diffMinutes > 0) {
+                alertBadge.innerHTML = `🌙 Arrivée de nuit (+${Math.round(diffMinutes)} min | Coucher ${sunsetStr})`;
+                alertBadge.className = "px-2.5 py-0.5 rounded font-bold bg-indigo-900 text-indigo-100 animate-pulse border border-indigo-700 shadow-sm";
+                alertBadge.classList.remove('hidden');
+            } else if (diffMinutes > -45) {
+                alertBadge.innerHTML = `⚠️ Fin au crépuscule (Coucher ${sunsetStr})`;
+                alertBadge.className = "px-2.5 py-0.5 rounded font-bold bg-amber-400 text-amber-950 border border-amber-500 shadow-sm";
+                alertBadge.classList.remove('hidden');
+            } else {
+                alertBadge.classList.add('hidden');
+            }
+        }
+
+        document.getElementById('start-time').addEventListener('input', () => {
+            if (waypoints.length >= 2) {
+                recalculatePhysics();
+                updateWeatherWidget(0, 0, 0);
+            }
+        });
+
+        /* DÉTECTION DES ASCENSIONS */
+        function detectClimbs() {
+            detectedClimbs = [];
+            const climbsListEl = document.getElementById('climbs-list');
+            climbsListEl.innerHTML = '';
+
+            const n = routeCoords.length;
+            if (n < 10) {
+                climbsListEl.innerHTML = '<span class="text-[10px] text-gray-400 italic">Trace un itinéraire pour voir les ascensions.</span>';
+                return;
+            }
+
+            const cumDist = new Float64Array(n);
+            let totalD = 0;
+            cumDist[0] = 0;
+            for (let i = 1; i < n; i++) {
+                totalD += L.latLng(routeCoords[i-1][1], routeCoords[i-1][0]).distanceTo(L.latLng(routeCoords[i][1], routeCoords[i][0]));
+                cumDist[i] = totalD;
+            }
+
+            const smoothedEle = new Float64Array(n);
+            const windowDist = 120;
+            for (let i = 0; i < n; i++) {
+                let sumEle = 0, count = 0;
+                const curD = cumDist[i];
+                for (let j = Math.max(0, i - 30); j <= Math.min(n - 1, i + 30); j++) {
+                    if (Math.abs(cumDist[j] - curD) <= windowDist) {
+                        sumEle += (routeCoords[j][2] || 0);
+                        count++;
+                    }
+                }
+                smoothedEle[i] = count > 0 ? sumEle / count : (routeCoords[i][2] || 0);
+            }
+
+            climbCum = cumDist;
+            climbEle = smoothedEle;
+
+            const evaluateAndPushClimb = (sIdx, pIdx) => {
+                const climbDist = cumDist[pIdx] - cumDist[sIdx];
+                const climbGain = smoothedEle[pIdx] - smoothedEle[sIdx];
+
+                if (climbDist >= 400 && climbGain >= 40) {
+                    const avgGrade = (climbGain / climbDist) * 100;
+                    const score = climbDist * avgGrade;
+
+                    if ((score >= 5000 && avgGrade >= 2.5) || (climbGain >= 35 && avgGrade >= 7.0)) {
+                        let maxGrade = avgGrade;
+                        for (let k = sIdx; k < pIdx; k++) {
+                            let k2 = k;
+                            while (k2 < pIdx && (cumDist[k2] - cumDist[k]) < 100) k2++;
+                            const dK = cumDist[k2] - cumDist[k];
+                            if (dK >= 60) {
+                                const gK = ((smoothedEle[k2] - smoothedEle[k]) / dK) * 100;
+                                if (gK > maxGrade) maxGrade = gK;
+                            }
+                        }
+
+                        let cat = "4e cat.";
+                        if (score >= 80000 && climbGain >= 600) cat = "HC";
+                        else if (score >= 45000 && climbGain >= 350) cat = "1re cat.";
+                        else if (score >= 22000 && climbGain >= 180) cat = "2e cat.";
+                        else if (score >= 11000 && climbGain >= 85) cat = "3e cat.";
+
+                        detectedClimbs.push({
+                            km: (cumDist[sIdx] / 1000).toFixed(1),
+                            lengthKm: (climbDist / 1000).toFixed(1),
+                            grade: avgGrade.toFixed(1),
+                            maxGrade: Math.min(25, maxGrade).toFixed(1),
+                            dPlus: Math.round(climbGain),
+                            cat: cat,
+                            startIdx: sIdx,
+                            peakIdx: pIdx,
+                            distStartMeters: cumDist[sIdx],
+                            distPeakMeters: cumDist[pIdx]
+                        });
+                    }
+                }
+            };
+
+            const eleAt = (idx) => routeCoords[idx][2] || 0;
+            const fwdIdx = (idx) => {
+                let j = idx;
+                while (j < n - 1 && (cumDist[j] - cumDist[idx]) < 120) j++;
+                return j;
+            };
+
+            let i = 0;
+            while (i < n - 1) {
+                const j = fwdIdx(i);
+                const dW = cumDist[j] - cumDist[i];
+                const slope = dW > 0 ? ((eleAt(j) - eleAt(i)) / dW) * 100 : 0;
+
+                if (slope < 3.5) { i++; continue; }
+
+                let s = i;
+                const sFloor = cumDist[i] - 150;
+                while (s > 0 && cumDist[s-1] >= sFloor && eleAt(s-1) < eleAt(s)) s--;
+
+                let peak = j, flat = 0, k = j, confirmed = false, abandoned = false, bestGain = 0;
+                while (k < n) {
+                    if (eleAt(k) > eleAt(peak)) { peak = k; flat = 0; }
+                    else {
+                        const dSeg = cumDist[k] - cumDist[k-1];
+                        const sSeg = dSeg > 0 ? ((eleAt(k) - eleAt(k-1)) / dSeg) * 100 : 0;
+                        if (Math.abs(sSeg) < 1.5) flat += dSeg;
+                    }
+
+                    const gain = eleAt(peak) - eleAt(s);
+                    if (gain > bestGain) bestGain = gain;
+                    if (gain >= 25) confirmed = true;
+
+                    if (!confirmed) {
+                        const span = cumDist[k] - cumDist[s];
+                        const avgSlope = span > 0 ? gain / span : 0;
+                        if (eleAt(k) <= eleAt(s) + 3
+                            || (bestGain >= 8 && eleAt(k) <= eleAt(s) + bestGain * 0.5)
+                            || (span > 550 && avgSlope < 0.02)) { abandoned = true; break; }
+                    }
+
+                    const dropFromPeak = eleAt(peak) - eleAt(k);
+                    const maxDropAllowed = Math.max(30, 0.15 * gain);
+                    if (dropFromPeak >= maxDropAllowed || flat >= 600 || k === n - 1) break;
+                    k++;
+                }
+
+                if (abandoned) { i = j; continue; }
+                evaluateAndPushClimb(s, peak);
+                i = peak + 1;
+            }
+
+            detectedClimbs.sort((a, b) => a.distStartMeters - b.distStartMeters);
+
+            if (detectedClimbs.length > 0) {
+                detectedClimbs.forEach((c, idx) => {
+                    const card = document.createElement('div');
+                    card.className = "flex flex-col bg-white border border-gray-200 rounded px-2.5 py-1 shrink-0 cursor-pointer hover:border-emerald-500 hover:bg-emerald-50 transition-colors select-none shadow-sm";
+                    
+                    let catBadge = "bg-gray-100 text-gray-700";
+                    if (c.cat === "HC") catBadge = "bg-purple-900 text-white font-black";
+                    else if (c.cat === "1re cat.") catBadge = "bg-rose-600 text-white font-bold";
+                    else if (c.cat === "2e cat.") catBadge = "bg-orange-500 text-white font-bold";
+                    else if (c.cat === "3e cat.") catBadge = "bg-amber-400 text-amber-950 font-bold";
+
+                    card.innerHTML = `
+                        <div class="flex items-center justify-between gap-3">
+                            <span class="text-[11px] font-bold text-gray-800">#${idx + 1} — km ${c.km.replace('.', ',')}</span>
+                            <span class="text-[9px] px-1.5 py-0.2 rounded ${catBadge}">${c.cat}</span>
+                        </div>
+                        <div class="flex items-center justify-between gap-3 text-[10px] text-gray-600 mt-0.5">
+                            <span>${c.lengthKm.replace('.', ',')} km à <strong class="text-emerald-700">${c.grade.replace('.', ',')} %</strong></span>
+                            <span class="font-bold text-gray-800">+${c.dPlus} m</span>
+                        </div>
+                    `;
+
+                    card.onmouseenter = () => highlightClimb(c.distStartMeters, c.distPeakMeters, c.startIdx, c.peakIdx);
+                    card.onmouseleave = () => resetHighlightClimb();
+                    
+                    card.onclick = () => {
+                        const climbPts = [];
+                        for (let k = c.startIdx; k <= c.peakIdx; k++) {
+                            climbPts.push([routeCoords[k][1], routeCoords[k][0]]);
+                        }
+                        const b = L.latLngBounds(climbPts);
+                        map.fitBounds(b, {
+                            padding: [45, 45],
+                            maxZoom: 15
+                        });
+                        showClimbModal(idx);
+                    };
+
+                    climbsListEl.appendChild(card);
+                });
+            } else {
+                climbsListEl.innerHTML = '<span class="text-[10px] text-gray-400 italic">Aucune difficulté majeure répertoriée.</span>';
+            }
+        }
+
+        /* DÉTAIL D'UNE ASCENSION (profil façon Tour de France) */
+        function closeClimbModal() {
+            document.getElementById('climb-modal').classList.add('hidden');
+        }
+
+        function gradeColor(g) {
+            if (g <= 2) return '#4ade80';
+            if (g <= 4) return '#a3e635';
+            if (g <= 6) return '#facc15';
+            if (g <= 8) return '#fb923c';
+            if (g <= 10) return '#ef4444';
+            if (g <= 12) return '#b91c1c';
+            return '#581c87';
+        }
+
+        function fmtDur(sec) {
+            sec = Math.round(sec);
+            const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), r = sec % 60;
+            if (h > 0) return `${h}h ${String(m).padStart(2, '0')}`;
+            return `${m} min ${String(r).padStart(2, '0')} s`;
+        }
+
+        const fr1 = (x) => x.toFixed(1).replace('.', ',');
+
+        function showClimbModal(idx) {
+            const c = detectedClimbs[idx];
+            if (!c || !climbCum) return;
+
+            const power = parseFloat(document.getElementById('power').value) || 160;
+            const weight = parseFloat(document.getElementById('weight').value) || 85;
+
+            const d0 = c.distStartMeters, d1 = c.distPeakMeters, L = d1 - d0;
+
+            const target = L >= 5000 ? 1000 : (L >= 2000 ? 500 : 200);
+            const cuts = [0];
+            while (L - cuts[cuts.length - 1] > target + 1e-6) cuts.push(cuts[cuts.length - 1] + target);
+            if (cuts.length > 1 && L - cuts[cuts.length - 1] < 0.25 * target && cuts.length > 1 && (L - cuts[cuts.length - 1]) < target) {
+                cuts.pop();
+            }
+            cuts.push(L);
+            const nSeg = cuts.length - 1;
+            const segLen = target;
+
+            const eleAt = (d) => {
+                let lo = c.startIdx, hi = c.peakIdx;
+                while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (climbCum[mid] <= d) lo = mid; else hi = mid; }
+                const a = climbCum[lo], b = climbCum[hi];
+                const t = b > a ? Math.min(1, Math.max(0, (d - a) / (b - a))) : 0;
+                return climbEle[lo] + t * (climbEle[hi] - climbEle[lo]);
+            };
+
+            const bounds = [];
+            for (let k = 0; k <= nSeg; k++) bounds.push(eleAt(d0 + cuts[k]));
+
+            const segs = [];
+            let cumTime = 0;
+            for (let k = 0; k < nSeg; k++) {
+                const len = cuts[k + 1] - cuts[k];
+                const gain = bounds[k + 1] - bounds[k];
+                const grade = (gain / len) * 100;
+                const t = len / calculateSpeed(gain / len, power, weight);
+                cumTime += t;
+                segs.push({ k, grade, gain, t, cumTime, len, from: cuts[k], to: cuts[k + 1], eleEnd: bounds[k + 1] });
+            }
+            const totalTime = cumTime;
+
+            const W = 720, H = 280, ml = 46, mr = 14, mt = 14, mb = 30;
+            const pw = W - ml - mr, ph = H - mt - mb;
+            const eMin0 = Math.min(...bounds), eMax0 = Math.max(...bounds);
+            const range = Math.max(30, eMax0 - eMin0);
+            const eMin = Math.floor((eMin0 - 0.05 * range) / 10) * 10;
+            const eMax = Math.ceil((eMax0 + Math.max(10, 0.18 * range)) / 10) * 10;
+            const X = (m) => ml + (m / L) * pw;
+            const Y = (e) => mt + ph - ((e - eMin) / (eMax - eMin)) * ph;
+
+            const steps = [10, 20, 25, 50, 100, 200, 250, 500];
+            const gridStep = steps.find(st => (eMax - eMin) / st <= 6) || 500;
+            let svg = `<svg viewBox="0 0 ${W} ${H}" class="w-full h-auto" style="max-height:340px">`;
+            for (let e = Math.ceil(eMin / gridStep) * gridStep; e <= eMax; e += gridStep) {
+                svg += `<line x1="${ml}" x2="${W - mr}" y1="${Y(e)}" y2="${Y(e)}" stroke="#e5e7eb" stroke-width="1"/>`;
+                svg += `<text x="${ml - 6}" y="${Y(e) + 3}" text-anchor="end" font-size="10" fill="#6b7280">${e} m</text>`;
+            }
+            segs.forEach(sg => {
+                const wide = ((sg.len / L) * pw) >= 34;
+                const xa = X(sg.from), xb = X(sg.to), ya = Y(bounds[sg.k]), yb = Y(bounds[sg.k + 1]), base = Y(eMin);
+                svg += `<polygon points="${xa},${base} ${xa},${ya} ${xb},${yb} ${xb},${base}" fill="${gradeColor(sg.grade)}" stroke="#ffffff" stroke-width="1">` +
+                       `<title>${fr1(sg.from / 1000)} → ${fr1(sg.to / 1000)} km : ${fr1(sg.grade)} %</title></polygon>`;
+                const ty = Math.min(ya, yb) - 5;
+                if (((sg.len / L) * pw) >= 18) {
+                    const label = wide ? fr1(sg.grade) : String(Math.round(sg.grade));
+                    svg += `<text x="${(xa + xb) / 2}" y="${ty}" text-anchor="middle" font-size="${wide ? 11 : 9}" font-weight="700" fill="#374151">${label}%</text>`;
+                }
+            });
+            const tickEvery = nSeg > 12 ? 2 : 1;
+            for (let k = 0; k <= nSeg; k += tickEvery) {
+                const m = cuts[k];
+                svg += `<line x1="${X(m)}" x2="${X(m)}" y1="${Y(eMin)}" y2="${Y(eMin) + 4}" stroke="#9ca3af"/>`;
+                svg += `<text x="${X(m)}" y="${Y(eMin) + 16}" text-anchor="middle" font-size="10" fill="#6b7280">${fr1(m / 1000)}</text>`;
+            }
+            svg += `<text x="${W - mr}" y="${H - 2}" text-anchor="end" font-size="10" fill="#6b7280">km depuis le pied de la montée</text>`;
+            svg += `</svg>`;
+
+            let catBadge = "bg-gray-100 text-gray-700";
+            if (c.cat === "HC") catBadge = "bg-purple-900 text-white font-black";
+            else if (c.cat === "1re cat.") catBadge = "bg-rose-600 text-white font-bold";
+            else if (c.cat === "2e cat.") catBadge = "bg-orange-500 text-white font-bold";
+            else if (c.cat === "3e cat.") catBadge = "bg-amber-400 text-amber-950 font-bold";
+
+            const stat = (label, value) => `<div class="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-center"><div class="text-[10px] uppercase tracking-wide text-gray-500">${label}</div><div class="text-base font-bold text-gray-800">${value}</div></div>`;
+
+            let rows = '';
+            segs.forEach(sg => {
+                rows += `<tr class="border-t border-gray-100">
+                    <td class="py-1 pr-2 text-gray-500">${sg.k + 1}</td>
+                    <td class="py-1 pr-2">${fr1(sg.from / 1000)} – ${fr1(sg.to / 1000)} km</td>
+                    <td class="py-1 pr-2">${Math.round(sg.len)} m</td>
+                    <td class="py-1 pr-2"><span class="inline-block w-2.5 h-2.5 rounded-sm align-middle mr-1" style="background:${gradeColor(sg.grade)}"></span><strong>${fr1(sg.grade)} %</strong></td>
+                    <td class="py-1 pr-2">${sg.gain >= 0 ? '+' : ''}${Math.round(sg.gain)} m</td>
+                    <td class="py-1 pr-2">${Math.round(sg.eleEnd)} m</td>
+                    <td class="py-1">${fmtDur(sg.cumTime)}</td>
+                </tr>`;
+            });
+
+            document.getElementById('climb-modal-body').innerHTML = `
+                <div class="flex items-center gap-3 mb-1 pr-8">
+                    <h2 class="text-xl font-bold text-emerald-700">Ascension #${idx + 1}</h2>
+                    <span class="text-xs px-2 py-0.5 rounded ${catBadge}">${c.cat}</span>
+                </div>
+                <p class="text-xs text-gray-500 mb-3">Du km ${c.km.replace('.', ',')} au km ${fr1(d1 / 1000)} de l'itinéraire · segments de ${Math.round(segLen)} m</p>
+                <div class="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-4">
+                    ${stat('Longueur', fr1(L / 1000) + ' km')}
+                    ${stat('Pente moy.', c.grade.replace('.', ',') + ' %')}
+                    ${stat('Pente max', c.maxGrade.replace('.', ',') + ' %')}
+                    ${stat('Dénivelé', '+' + c.dPlus + ' m')}
+                    ${stat('Altitude', Math.round(bounds[0]) + ' → ' + Math.round(bounds[nSeg]) + ' m')}
+                    ${stat('Temps estimé', fmtDur(totalTime))}
+                </div>
+                ${svg}
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-gray-600 mt-1 mb-3">
+                    <span class="font-semibold">Pente :</span>
+                    ${[[0, '≤ 2 %'], [3, '2–4'], [5, '4–6'], [7, '6–8'], [9, '8–10'], [11, '10–12'], [13, '> 12']].map(([g, t]) => `<span><span class="inline-block w-2.5 h-2.5 rounded-sm align-middle mr-1" style="background:${gradeColor(g)}"></span>${t}</span>`).join('')}
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-xs text-left">
+                        <thead class="text-gray-500"><tr>
+                            <th class="pb-1 pr-2 font-medium">#</th><th class="pb-1 pr-2 font-medium">Distance</th><th class="pb-1 pr-2 font-medium">Long.</th>
+                            <th class="pb-1 pr-2 font-medium">Pente</th><th class="pb-1 pr-2 font-medium">Dénivelé</th><th class="pb-1 pr-2 font-medium">Altitude</th><th class="pb-1 font-medium">Temps cumulé</th>
+                        </tr></thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
+                <p class="text-[10px] text-gray-400 mt-3">Temps estimé avec ta puissance et ton poids actuels. Les pentes sont calculées sur une altitude lissée.</p>`;
+
+            document.getElementById('climb-modal').classList.remove('hidden');
+        }
+
+        function highlightClimb(startDistMeters, endDistMeters, startIdx, peakIdx) {
+            activeClimbRange = {
+                start: startDistMeters / 1000,
+                end: endDistMeters / 1000
+            };
+            if (chartInstance) chartInstance.update('none');
+
+            activeClimbLayer.clearLayers();
+            const climbPoints = [];
+            for (let k = startIdx; k <= peakIdx; k++) {
+                climbPoints.push([routeCoords[k][1], routeCoords[k][0]]);
+            }
+            L.polyline(climbPoints, { color: '#ef4444', weight: 8, opacity: 0.9, pane: 'overlayPane' }).addTo(activeClimbLayer);
+        }
+
+        function resetHighlightClimb() {
+            activeClimbRange = null;
+            if (chartInstance) chartInstance.update('none');
+            activeClimbLayer.clearLayers();
+        }
+
+        /* GRAPHIQUE */
+        let isPanelOpen = false;
+        function toggleElevationPanel() {
+            const panel = document.getElementById('elevation-panel');
+            const btn = document.getElementById('btn-chart');
+            
+            isPanelOpen = !isPanelOpen;
+            panel.style.height = isPanelOpen ? '230px' : '0px';
+
+            if (isPanelOpen) {
+                btn.classList.add('opacity-0', 'pointer-events-none');
+            } else {
+                btn.classList.remove('opacity-0', 'pointer-events-none');
+            }
+
+            setTimeout(() => {
+                map.invalidateSize();
+                if (chartInstance) chartInstance.resize();
+            }, 310);
+        }
+
+        function updateChart() {
+            const ctx = document.getElementById('elevationChart').getContext('2d');
+            if (chartInstance) chartInstance.destroy();
+
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: chartStats.dist,
+                    datasets: [{
+                        label: 'Altitude (m)', data: chartStats.ele, fill: true,
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)', borderWidth: 4,
+                        pointRadius: 0, pointHoverRadius: 6, tension: 0.2,
+                        segment: {
+                            borderColor: ctx => {
+                                const idx = ctx.p0DataIndex;
+                                if (activeClimbRange) {
+                                    const xVal = parseFloat(chartStats.dist[idx]);
+                                    return (xVal >= activeClimbRange.start && xVal <= activeClimbRange.end) ? '#ef4444' : '#cbd5e1';
+                                }
+                                const s = chartStats.slope[idx] ?? 0;
+                                if (s < -2) return '#3b82f6';
+                                if (s <= 3) return '#22c55e';
+                                if (s <= 6) return '#eab308';
+                                if (s <= 9) return '#f97316';
+                                if (s <= 12) return '#ef4444';
+                                return '#000000';
+                            }
+                        }
+                    }]
+                },
+                options: {
+                    animation: false,
+                    responsive: true, maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    plugins: { 
+                        legend: { display: false },
+                        tooltip: {
+                            animation: false,
+                            callbacks: {
+                                title: (items) => `Distance : ${items[0].label} km`,
+                                label: (ctx) => {
+                                    const idx = ctx.dataIndex;
+                                    const startDt = new Date(document.getElementById('start-time').value).getTime();
+                                    const etaSec = chartStats.eta[idx];
+                                    const date = new Date(startDt + etaSec * 1000);
+                                    const timeStr = date.toLocaleTimeString('fr-FR', {hour: '2-digit', minute:'2-digit'});
+                                    const durH = Math.floor(etaSec / 3600);
+                                    const durM = Math.floor((etaSec % 3600) / 60).toString().padStart(2, '0');
+                                    
+                                    return [
+                                        `Altitude : ${ctx.raw.toFixed(0)} m (Pente : ${(chartStats.slope[idx] ?? 0).toFixed(1)} %)`,
+                                        `Passage : ${timeStr} (+${durH}h${durM})`
+                                    ];
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: { 
+                            ticks: { 
+                                maxTicksLimit: 12,
+                                callback: function(value) {
+                                    const rawVal = this.getLabelForValue(value);
+                                    const num = parseFloat(rawVal);
+                                    return isNaN(num) ? '' : Math.round(num) + ' km';
+                                }
+                            }, 
+                            grid: { display: false } 
+                        },
+                        y: { title: { display: true, text: 'Alt (m)' } }
+                    },
+                    onHover: (e, activeEls) => {
+                        if (activeEls.length > 0) {
+                            const idx = activeEls[0].index;
+                            const realIdx = chartStats.coordIdx[idx];
+                            const c = routeCoords[realIdx];
+                            
+                            hoverMarker.setLatLng([c[1], c[0]]).setStyle({ opacity: 1, fillOpacity: 1 });
+                            hoverMarker.bringToFront();
+                            updateWeatherWidget(chartStats.eta[idx], realIdx, chartStats.dist[idx]);
+                        } else {
+                            hoverMarker.setStyle({ opacity: 0, fillOpacity: 0 });
+                            updateWeatherWidget(0, 0, 0);
+                        }
+                    }
+                }
+            });
+        }
+
+        document.getElementById('elevationChart').addEventListener('mouseleave', () => {
+             if (hoverMarker) hoverMarker.setStyle({ opacity: 0, fillOpacity: 0 });
+             updateWeatherWidget(0, 0, 0);
+        });
+
+        /* MÉTÉO (SPATIALE & TEMPORELLE INTERPOLÉE, FLUIDE ET NON-BLOQUANTE) */
+        function triggerWeatherFetch() {
+            clearTimeout(weatherDebounceTimer);
+            if (waypoints.length < 2 || !routeCoords || routeCoords.length < 2) return;
+            
+            const ww = document.getElementById('weather-widget');
+            ww.classList.remove('hidden');
+            ww.style.display = 'flex';
+            
+            if (!weatherStationsData || weatherStationsData.length === 0) {
+                document.getElementById('w-loading-indicator').classList.remove('hidden');
+                document.getElementById('w-loading-indicator').classList.add('flex');
+                document.getElementById('w-content').classList.add('opacity-40');
+            }
+
+            weatherDebounceTimer = setTimeout(() => {
+                fetchWeatherAlongRoute();
+            }, 350);
+        }
+
+        async function fetchWeatherAlongRoute() {
+            if (!routeCoords || routeCoords.length < 2) return;
+
+            if (weatherAbortController) {
+                weatherAbortController.abort();
+            }
+            weatherAbortController = new AbortController();
+
+            const numStations = 5;
+            const sampledStations = [];
+            for (let s = 0; s < numStations; s++) {
+                const fraction = s / (numStations - 1);
+                const coordIdx = Math.min(Math.floor(fraction * (routeCoords.length - 1)), routeCoords.length - 1);
+                const coord = routeCoords[coordIdx];
+                sampledStations.push({
+                    lat: coord[1],
+                    lng: coord[0],
+                    coordIdx: coordIdx,
+                    label: s === 0 ? "Départ" : (s === numStations - 1 ? "Arrivée" : `Étape ${s}`)
+                });
+            }
+
+            const lats = sampledStations.map(st => st.lat.toFixed(4)).join(',');
+            const lons = sampledStations.map(st => st.lng.toFixed(4)).join(',');
+            const url = `https://api.open-meteo.com/v1/forecast?latitude=${lats}&longitude=${lons}&hourly=temperature_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,wind_gusts_10m,wind_direction_10m&timezone=auto&past_days=1&forecast_days=14`;
+
+            try {
+                const res = await fetch(url, { signal: weatherAbortController.signal });
+                if (!res.ok) throw new Error("HTTP " + res.status);
+                const rawData = await res.json();
+                if (rawData.error) throw new Error(rawData.reason);
+
+                const list = Array.isArray(rawData) ? rawData : [rawData];
+                if (!list[0] || !list[0].hourly) throw new Error("Données horaires indisponibles");
+                
+                weatherStationsData = list.map((item, i) => ({
+                    station: sampledStations[i],
+                    hourly: item.hourly
+                }));
+
+                document.getElementById('w-loading-indicator').classList.add('hidden');
+                document.getElementById('w-loading-indicator').classList.remove('flex');
+                document.getElementById('w-content').classList.remove('opacity-40');
+
+                updateWeatherWidget(0, 0, 0);
+            } catch (e) {
+                if (e.name === 'AbortError') return;
+                console.warn("Météo temporairement indisponible :", e);
+                document.getElementById('w-loading-indicator').classList.add('hidden');
+                document.getElementById('w-loading-indicator').classList.remove('flex');
+                document.getElementById('w-content').classList.remove('opacity-40');
+            }
+        }
+
+        function updateWeatherWidget(etaSeconds, coordIdx, currentDistKm) {
+            if (!weatherStationsData || weatherStationsData.length === 0) return;
+
+            let closest = weatherStationsData[0];
+            let minDiff = Infinity;
+            for (const item of weatherStationsData) {
+                const diff = Math.abs(item.station.coordIdx - coordIdx);
+                if (diff < minDiff) { minDiff = diff; closest = item; }
+            }
+
+            if (!closest || !closest.hourly || !closest.hourly.time) return;
+
+            const targetDt = new Date(new Date(document.getElementById('start-time').value).getTime() + etaSeconds * 1000);
+            const targetMs = targetDt.getTime();
+            const times = closest.hourly.time;
+
+            let idxA = 0;
+            for (let i = 0; i < times.length; i++) {
+                if (new Date(times[i]).getTime() <= targetMs) idxA = i; else break;
+            }
+            let idxB = Math.min(idxA + 1, times.length - 1);
+
+            const timeA = new Date(times[idxA]).getTime();
+            const timeB = new Date(times[idxB]).getTime();
+            let alpha = (timeB > timeA) ? (targetMs - timeA) / (timeB - timeA) : 0;
+            alpha = Math.max(0, Math.min(1, alpha));
+
+            const d = closest.hourly;
+            const lerp = (v1, v2, a) => (v1 !== undefined && v2 !== undefined) ? v1 + (v2 - v1) * a : (v1 !== undefined ? v1 : 0);
+
+            const t = lerp(d.temperature_2m[idxA], d.temperature_2m[idxB], alpha);
+            const feels = lerp(d.apparent_temperature[idxA], d.apparent_temperature[idxB], alpha);
+            
+            const windArr = d.wind_speed_10m || d.windspeed_10m || [];
+            const gustArr = d.wind_gusts_10m || d.windgusts_10m || windArr;
+            const dirArr = d.wind_direction_10m || d.winddirection_10m || [];
+            const codeArr = d.weather_code || d.weathercode || [];
+
+            const wind = lerp(windArr[idxA], windArr[idxB], alpha);
+            const gust = lerp(gustArr[idxA], gustArr[idxB], alpha);
+
+            const closeIdx = alpha < 0.5 ? idxA : idxB;
+            const precip = d.precipitation[closeIdx] || 0;
+            const dir = dirArr[closeIdx] || 0;
+            const code = codeArr[closeIdx] || 0;
+
+            let locText = "Départ";
+            if (coordIdx > 0 && currentDistKm > 0) {
+                locText = (coordIdx >= routeCoords.length - 2) ? "Arrivée" : `km ${Math.round(currentDistKm)}`;
+            }
+            document.getElementById('w-loc').innerText = locText;
+            document.getElementById('w-time').innerText = targetDt.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
+            document.getElementById('w-temp').innerText = t.toFixed(1).replace('.', ',');
+            document.getElementById('w-feels').innerText = feels.toFixed(1).replace('.', ',');
+            document.getElementById('w-precip').innerText = precip > 0 ? `${precip.toFixed(1).replace('.', ',')} mm` : 'Sec';
+            document.getElementById('w-wind').innerText = Math.round(wind);
+            document.getElementById('w-gust').innerText = Math.round(gust);
+
+            const arrow = document.getElementById('w-wind-dir');
+            arrow.style.transform = `rotate(${dir + 180}deg)`;
+
+            let emoji = '☀️', desc = "Ciel dégagé";
+            if (code <= 1) { emoji = '☀️'; desc = "Ensoleillé"; }
+            else if (code <= 3) { emoji = '⛅'; desc = "Éclaircies"; }
+            else if (code <= 48) { emoji = '☁️'; desc = "Nuageux / Brume"; }
+            else if (code <= 69) { emoji = '🌧️'; desc = "Pluie"; }
+            else if (code <= 79) { emoji = '🌨️'; desc = "Neige"; }
+            else if (code <= 99) { emoji = '⛈️'; desc = "Orages"; }
+            document.getElementById('w-icon').innerText = emoji;
+            document.getElementById('w-desc').innerText = desc;
+        }
+
+        /* GÉNÉRATEUR QR CODE (vrai encodage, scannable) */
+        function generateQRCodeSVG(text, size = 288) {
+            let qr;
+            try {
+                qr = qrcode(0, 'L');           // taille auto, correction d'erreur basse = QR plus léger
+                qr.addData(text, 'Byte');
+                qr.make();
+            } catch (e) {
+                return '<p class="text-xs text-red-600 p-2">Lien trop long pour un QR Code. Utilise le bouton Copier ou l\'export GPX.</p>';
+            }
+            const n = qr.getModuleCount();
+            const quiet = 4;                    // marge blanche obligatoire pour être lu
+            const total = n + quiet * 2;
+            let path = '';
+            for (let r = 0; r < n; r++) {
+                for (let c = 0; c < n; c++) {
+                    if (qr.isDark(r, c)) path += `M${c + quiet},${r + quiet}h1v1h-1z`;
+                }
+            }
+            return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${total} ${total}" shape-rendering="crispEdges"><rect width="${total}" height="${total}" fill="#ffffff"/><path d="${path}" fill="#000000"/></svg>`;
+        }
+
+        /* SAUVEGARDE & EXPORT */
+        function saveToLocalStorage() {
+            localStorage.setItem('cycloPlanRoute', JSON.stringify({ waypoints: waypoints.map(w => ({lat: w.lat, lng: w.lng})), profile: document.getElementById('profile').value }));
+        }
+
+        function loadState() {
+            const hash = window.location.hash;
+            if (hash.startsWith('#r=')) {
+                try {
+                    waypoints = hash.substring(3).split(';').map(p => {
+                        const c = p.split(','); return L.latLng(parseFloat(c[0]), parseFloat(c[1]));
+                    }).filter(ll => !isNaN(ll.lat) && !isNaN(ll.lng));
+                    if (waypoints.length > 0) { 
+                        map.fitBounds(L.latLngBounds(waypoints), { padding: [45, 45] }); 
+                        pushHistory(); 
+                        updateRoute(false, true); 
+                        return; 
+                    }
+                } catch(e) {}
+            }
+            const saved = localStorage.getItem('cycloPlanRoute');
+            if (saved) {
+                try {
+                    const data = JSON.parse(saved);
+                    if (data.waypoints && data.waypoints.length > 0) {
+                        waypoints = data.waypoints.map(w => L.latLng(w.lat, w.lng));
+                        if(data.profile) document.getElementById('profile').value = data.profile;
+                        map.fitBounds(L.latLngBounds(waypoints), { padding: [45, 45] }); 
+                        pushHistory(); 
+                        updateRoute(false, true); 
+                    }
+                } catch (e) {}
+            }
+        }
+
+        function importGPX(event) {
+            const file = event.target.files[0]; if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const xml = new DOMParser().parseFromString(e.target.result, "text/xml");
+                let pts = Array.from(xml.getElementsByTagName("trkpt"));
+                if (pts.length === 0) pts = Array.from(xml.getElementsByTagName("rtept"));
+                pts = pts.filter(p => !isNaN(parseFloat(p.getAttribute("lat"))) && !isNaN(parseFloat(p.getAttribute("lon"))));
+                if (pts.length === 0) return alert("Aucune trace GPX.");
+                const toLL = p => L.latLng(parseFloat(p.getAttribute("lat")), parseFloat(p.getAttribute("lon")));
+                const step = Math.max(1, Math.ceil(pts.length / 30));
+                const newWP = [];
+                for (let i = 0; i < pts.length; i += step) newWP.push(toLL(pts[i]));
+                const last = toLL(pts[pts.length - 1]);
+                const lastWP = newWP[newWP.length - 1];
+                if (lastWP.lat !== last.lat || lastWP.lng !== last.lng) newWP.push(last);
+                pushHistory(); 
+                waypoints = newWP; 
+                map.fitBounds(L.latLngBounds(waypoints), { padding: [45, 45] }); 
+                updateRoute(true, true); 
+            };
+            reader.readAsText(file); event.target.value = '';
+        }
+
+        function exportGPX() {
+            if (!routeCoords || routeCoords.length === 0) return;
+            let gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="CycloPlan Pro" xmlns="http://www.topografix.com/GPX/1/1">\n  <trk>\n    <name>Itinéraire CycloPlan</name>\n    <trkseg>\n`;
+            routeCoords.forEach(c => gpx += `      <trkpt lat="${c[1]}" lon="${c[0]}">${c[2] !== undefined ? `<ele>${c[2]}</ele>` : ''}</trkpt>\n`);
+            gpx += `    </trkseg>\n  </trk>\n</gpx>`;
+            const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([gpx], {type: "application/gpx+xml"}));
+            a.download = "cycloplan_route.gpx"; a.click();
+        }
+
+        function showQRModal() {
+            if (waypoints.length < 2) return;
+            const u = new URL(window.location.href.split('#')[0]);
+            u.hash = `r=${waypoints.map(w => `${w.lat.toFixed(4)},${w.lng.toFixed(4)}`).join(';')}`;
+            document.getElementById('qr-url').value = u.toString();
+            
+            document.getElementById('qr-container').innerHTML = generateQRCodeSVG(u.toString(), 288);
+
+            document.getElementById('qr-file-warning').classList.toggle('hidden', window.location.protocol !== 'file:');
+            document.getElementById('qr-modal').classList.remove('hidden');
+        }
+
+        function copyUrl() {
+            const urlInput = document.getElementById('qr-url');
+            urlInput.select();
+            if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(urlInput.value).catch(() => document.execCommand('copy'));
+            else document.execCommand('copy');
+            const b = document.getElementById('btn-copy'); b.innerText = "Copié !"; setTimeout(() => b.innerText = "Copier", 2000);
+        }
+
+        window.onload = initMap;
+    </script>
+</body>
+</html>
