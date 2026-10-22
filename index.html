@@ -498,6 +498,8 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
         /* POINTS D'EAU : fichier local France + Suisse (water-fr-ch.json), plus aucune requête Overpass */
         let waterPoints = null;
         let waterLoadPromise = null;
+        let waterDebounceTimer = null;
+        let waterSearchedOnce = false;
         const WATER_CELL = 0.25;
 
         const WATER_ICON = L.divIcon({
@@ -525,7 +527,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
             let minLa = Infinity, maxLa = -Infinity, minLo = Infinity, maxLo = -Infinity;
             for (let i = 0; i < routeCoords.length; i += step) {
                 const la = routeCoords[i][1], lo = routeCoords[i][0];
-                samples.push([la, lo]);
+                samples.push(L.latLng(la, lo));
                 if (la < minLa) minLa = la; if (la > maxLa) maxLa = la;
                 if (lo < minLo) minLo = lo; if (lo > maxLo) maxLo = lo;
             }
